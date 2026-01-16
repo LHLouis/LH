@@ -26,7 +26,6 @@
             measurementId: "G-2QJKQ983TB"
         };
 
-        // 優先順序：1. 系統自動注入環境配置 2. 使用者填寫的 userFirebaseConfig
         const envConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
         const finalConfig = envConfig || userFirebaseConfig;
 
@@ -53,18 +52,17 @@
                         statusEl.textContent = "雲端同步中";
                         statusEl.className = "bg-green-100 text-green-600 text-[10px] font-bold px-3 py-1 rounded-full shadow-sm";
                         
-                        // 監聽並自動同步 鑰匙庫
                         const accountRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'accountDb');
                         onSnapshot(accountRef, (snap) => {
                             if (snap.exists()) {
                                 window.accountDatabase = snap.data();
                                 renderDatabaseTable();
+                                updateStoreDataList();
                                 handleAutoLookup();
                                 updatePreview();
                             }
                         }, (err) => console.error("帳號讀取失敗", err));
 
-                        // 監聽並自動同步 路線模板
                         const routeRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'routeTemplates');
                         onSnapshot(routeRef, (snap) => {
                             if (snap.exists()) {
@@ -77,7 +75,6 @@
                     }
                 });
 
-                // 提供給 UI 操作呼叫的儲存函式
                 window.syncToCloud = async () => {
                     const user = auth.currentUser;
                     if (!user) return;
@@ -95,13 +92,12 @@
                 console.error("Firebase 初始化失敗", e);
             }
         } else {
-            // 本地或完全無配置模式
             document.addEventListener('DOMContentLoaded', () => {
                 const statusEl = document.getElementById('cloudStatus');
                 statusEl.textContent = "本地模式 (無雲端同步)";
                 statusEl.className = "bg-orange-100 text-orange-600 text-[10px] font-bold px-3 py-1 rounded-full shadow-sm";
             });
-            window.syncToCloud = () => { console.log("當前環境不支援儲存"); };
+            window.syncToCloud = () => { console.log("環境不支援儲存"); };
         }
     </script>
     <style>
@@ -112,37 +108,38 @@
         .store-row:nth-child(even) { background-color: #f9fafb; }
         .transition-all { transition: all 0.3s ease-in-out; }
         .tab-active { border-bottom: 3px solid #10b981 !important; color: #10b981 !important; font-weight: bold !important; }
+        .label-container { display: flex; flex-direction: column; justify-content: flex-end; height: 42px; margin-bottom: 6px; }
         
-        /* 統一標籤容器高度，解決輸入框對不齊問題 */
-        .label-container { 
-            display: flex; 
-            flex-direction: column; 
-            justify-content: flex-end; 
-            height: 42px; 
-            margin-bottom: 6px; 
-        }
+        input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
     </style>
 </head>
 <body class="p-3 md:p-8">
+    <!-- 店名自動提示清單 -->
+    <datalist id="storeDataList"></datalist>
+
     <div class="max-w-[1400px] mx-auto"> 
         
-        <!-- 同步狀態提示 -->
-        <div class="flex justify-end mb-2">
+        <!-- 置頂狀態列 -->
+        <div class="flex justify-between items-center mb-2 px-2">
+            <h1 class="text-lg font-black text-gray-800 tracking-tight">司機爆量資訊產生工具</h1>
             <span id="cloudStatus" class="bg-gray-100 text-gray-500 text-[10px] font-bold px-3 py-1 rounded-full shadow-sm transition-all">載入中...</span>
         </div>
 
-        <!-- 1. 頂部：基本配置 (STEP 1) -->
+        <!-- STEP 1: 基本配置 -->
         <div class="config-card p-5 mb-6 shadow-md">
             <div class="flex items-center mb-4">
-                <span class="bg-blue-100 text-blue-700 text-sm font-bold px-3 py-1 rounded-full mr-3">STEP 1</span>
+                <span class="bg-blue-100 text-blue-700 text-sm font-bold px-3 py-1 rounded-full mr-3 shadow-sm">STEP 1</span>
                 <h2 class="text-base font-bold text-gray-700">基本配置 (固定資訊)</h2>
             </div>
             
             <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-12 gap-4">
-                <!-- 當前爆量類型 -->
                 <div class="lg:col-span-2">
                     <div class="label-container">
-                        <label class="text-sm font-semibold text-blue-600 font-bold">當前爆量類型</label>
+                        <label class="text-sm font-semibold text-blue-600 font-bold">選擇爆量類型</label>
                     </div>
                     <select id="volumeType" onchange="onTypeChange()" class="w-full p-3 text-base border-2 border-blue-100 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-400 font-bold text-blue-800 transition-all">
                         <option value="爆收">爆收</option>
@@ -151,49 +148,44 @@
                     </select>
                 </div>
 
-                <!-- 出貨路線 -->
                 <div class="lg:col-span-2">
                     <div class="label-container">
                         <span class="text-xs text-blue-500 font-bold leading-tight">(如Y2-1、Y2-1NDD)</span>
                         <label class="text-sm font-semibold text-gray-700 font-bold">出貨路線</label>
                     </div>
-                    <input type="text" id="route" oninput="updatePreview()" placeholder="請輸入路線" class="w-full p-3 text-base border-2 rounded-lg outline-none focus:ring-2 focus:ring-blue-400 border-gray-100 bg-blue-50/30">
+                    <input type="text" id="route" oninput="updatePreview()" placeholder="請輸入路線" class="w-full p-3 text-base border-2 rounded-lg outline-none focus:ring-2 focus:ring-blue-400 border-gray-100 bg-blue-50/30 font-bold">
                 </div>
 
-                <!-- 車輛頓型 -->
                 <div class="lg:col-span-2">
                     <div class="label-container">
                         <label class="text-sm font-semibold text-gray-500 text-nowrap">車輛頓型</label>
                     </div>
-                    <select id="vehicleType" onchange="updatePreview()" class="w-full p-3 text-base border-2 rounded-lg outline-none bg-white border-gray-100 px-2">
+                    <select id="vehicleType" onchange="updatePreview()" class="w-full p-3 text-base border-2 rounded-lg outline-none bg-white border-gray-100 px-2 font-bold">
                         <option value="6.2T">6.2T</option>
                         <option value="8.5T">8.5T</option>
                         <option value="11T">11T</option>
                     </select>
                 </div>
 
-                <!-- 司機編號 -->
                 <div class="lg:col-span-2">
                     <div class="label-container">
                         <label class="text-sm font-semibold text-gray-500">司機編號</label>
                     </div>
-                    <input type="text" id="driverId" oninput="updatePreview()" placeholder="請輸入編號" class="w-full p-3 text-base border-2 rounded-lg outline-none focus:ring-2 focus:ring-blue-400 border-gray-100">
+                    <input type="text" id="driverId" oninput="updatePreview()" placeholder="請輸入編號" class="w-full p-3 text-base border-2 rounded-lg outline-none focus:ring-2 focus:ring-blue-400 border-gray-100 font-bold">
                 </div>
 
-                <!-- 開門帳號 -->
                 <div class="lg:col-span-1">
                     <div class="label-container">
                         <label class="text-sm font-semibold text-gray-400 text-nowrap">開門帳號</label>
                     </div>
-                    <input type="text" id="openAccount" readonly placeholder="AUTO" class="w-full p-3 text-base border-2 border-gray-50 bg-gray-50 rounded-lg outline-none cursor-not-allowed text-gray-400 text-center">
+                    <input type="text" id="openAccount" readonly placeholder="AUTO" class="w-full p-3 text-base border-2 border-gray-50 bg-gray-50 rounded-lg outline-none cursor-not-allowed text-gray-400 text-center font-bold">
                 </div>
                 
-                <!-- 變動欄位 (疊貨倉別/收貨類型) -->
                 <div id="warehouseContainer" class="lg:col-span-3 hidden">
                     <div class="label-container">
                         <label class="text-sm font-semibold text-orange-600 font-bold">疊貨倉別</label>
                     </div>
-                    <select id="warehouseType" onchange="updatePreview()" class="w-full p-3 text-base border-2 border-orange-200 rounded-lg outline-none bg-white">
+                    <select id="warehouseType" onchange="updatePreview()" class="w-full p-3 text-base border-2 border-orange-200 rounded-lg outline-none bg-white font-bold">
                         <option value="六倉">六倉</option>
                         <option value="小南倉">小南倉</option>
                     </select>
@@ -202,38 +194,36 @@
                     <div class="label-container">
                         <label class="text-sm font-semibold text-gray-500 font-bold">收貨類型</label>
                     </div>
-                    <select id="deliveryType" onchange="updatePreview()" class="w-full p-3 text-base border-2 border-gray-200 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-400">
+                    <select id="deliveryType" onchange="updatePreview()" class="w-full p-3 text-base border-2 border-gray-200 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-400 font-bold">
                     </select>
                 </div>
             </div>
         </div>
 
-        <!-- 主要操作區 -->
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
             
-            <!-- 左側：店點與匯入 -->
+            <!-- STEP 2: 店點清單 -->
             <div class="lg:col-span-7 space-y-6">
                 
                 <div class="main-card p-6">
-                    <div class="flex flex-wrap items-center justify-between mb-6 gap-3">
-                        <div class="flex items-center">
-                            <span class="bg-orange-100 text-orange-700 text-sm font-bold px-3 py-1 rounded-full mr-3">STEP 2</span>
-                            <h2 class="text-xl font-bold text-gray-800">店點清單</h2>
-                        </div>
+                    <div class="flex items-center mb-6">
+                        <span class="bg-orange-100 text-orange-700 text-sm font-bold px-3 py-1 rounded-full mr-3 shadow-sm">STEP 2</span>
+                        <h2 class="text-xl font-bold text-gray-800">店點清單</h2>
                     </div>
 
-                    <!-- 快速選擇模板 (僅爆送顯示) -->
                     <div id="templateSelectionContainer" class="hidden mb-6 p-4 bg-blue-50 rounded-xl border-2 border-blue-100 shadow-inner">
-                        <label class="block text-sm font-bold text-blue-700 mb-2.5">快速選擇作業路線模板:</label>
+                        <label class="block text-sm font-bold text-blue-700 mb-2.5 flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                            快速載入路線店點:
+                        </label>
                         <div class="flex gap-3">
-                            <select id="routeTemplateSelector" class="flex-grow p-3 text-base border-2 border-white rounded-lg bg-white outline-none shadow-sm">
-                                <option value="">-- 如果知道路線，請選擇路線 --</option>
+                            <select id="routeTemplateSelector" class="flex-grow p-3 text-base border-2 border-white rounded-lg bg-white outline-none shadow-sm font-bold">
+                                <option value="">-- 請選擇作業路線 --</option>
                             </select>
-                            <button onclick="applyRouteTemplate()" class="px-6 py-2 bg-blue-600 text-white text-base font-bold rounded-lg hover:bg-blue-700 transition shadow-md">確認載入</button>
+                            <button onclick="applyRouteTemplate()" class="px-6 py-2 bg-blue-600 text-white text-base font-bold rounded-lg hover:bg-blue-700 transition shadow-md whitespace-nowrap">確認載入</button>
                         </div>
                     </div>
 
-                    <!-- 操作按鈕 -->
                     <div class="flex flex-wrap gap-3 mb-6">
                         <button onclick="addStoreRow()" class="flex-1 min-w-[120px] py-3 bg-white text-blue-600 text-base font-bold rounded-xl hover:bg-blue-50 border-2 border-blue-200 transition shadow-sm flex items-center justify-center gap-2">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
@@ -249,28 +239,26 @@
                         </button>
                     </div>
 
-                    <!-- 批次貼上區塊 -->
                     <div id="batchContainer" class="hidden mb-6 p-4 bg-orange-50 rounded-xl border-2 border-orange-200 shadow-inner">
-                        <textarea id="batchInput" rows="5" class="w-full p-3 text-base border-none rounded-lg outline-none" placeholder="在此貼上多個店名..."></textarea>
+                        <textarea id="batchInput" rows="5" class="w-full p-3 text-base border-none rounded-lg outline-none font-bold" placeholder="在此貼上多個店名 (每一行一個)"></textarea>
                         <div class="flex justify-end mt-3">
                             <button onclick="processBatch()" class="px-6 py-2 bg-orange-500 text-white text-base font-bold rounded-lg hover:bg-orange-600 shadow-md">確認匯入</button>
                         </div>
                     </div>
 
-                    <!-- 店點列表 -->
-                    <div id="storeList" class="space-y-3 max-h-[450px] overflow-y-auto pr-2 border rounded-xl p-2 bg-gray-50/50 shadow-inner">
+                    <div id="storeList" class="space-y-3 max-h-[500px] overflow-y-auto pr-2 border rounded-xl p-2 bg-gray-50/50 shadow-inner">
                     </div>
                 </div>
 
-                <!-- 3. 資料庫管理 (STEP 3) -->
+                <!-- STEP 3: 資料庫維護 -->
                 <div class="db-card shadow-md overflow-hidden transition-all bg-white">
                     <div class="p-5 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors" onclick="toggleDbSection()">
                         <div class="flex items-center">
-                            <span class="bg-green-100 text-green-700 text-sm font-bold px-3 py-1 rounded-full mr-3">STEP 3</span>
+                            <span class="bg-green-100 text-green-700 text-sm font-bold px-3 py-1 rounded-full mr-3 shadow-sm">STEP 3</span>
                             <h2 class="text-base font-bold text-gray-700">資料庫維護</h2>
                         </div>
                         <div class="flex items-center gap-3">
-                            <span id="currentEditingType" class="text-xs font-bold text-green-600 px-3 py-1 bg-green-50 rounded-full border border-green-100">當前維護：爆收</span>
+                            <span id="currentEditingType" class="text-xs font-bold text-green-600 px-3 py-1 bg-green-50 rounded-full border border-green-100">模式：爆收</span>
                             <button class="text-gray-400 hover:text-green-600 flex items-center gap-1 text-sm font-bold transition-colors">
                                 <svg id="dbToggleIcon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 transform transition-transform duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
                                 <span id="dbToggleText">展開維護</span>
@@ -279,16 +267,40 @@
                     </div>
 
                     <div id="dbContentArea" class="hidden p-6 border-t border-gray-100">
-                        <div class="flex gap-6 border-b-2 mb-6 text-sm font-bold">
-                            <button onclick="switchDbTab('accounts')" id="tab-accounts" class="pb-3 px-4 transition-all tab-active">鑰匙帳號庫</button>
-                            <button onclick="switchDbTab('routes')" id="tab-routes" class="pb-3 px-4 transition-all text-gray-400 hidden">作業路線庫</button>
+                        
+                        <!-- ✨ 備份功能區 (已縮小並移至右側) ✨ -->
+                        <div class="flex flex-wrap items-end justify-between gap-4 mb-4">
+                            <div class="flex gap-4 border-b-2 text-sm font-bold flex-grow">
+                                <button onclick="switchDbTab('accounts')" id="tab-accounts" class="pb-3 px-4 transition-all tab-active">鑰匙帳號庫</button>
+                                <button onclick="switchDbTab('routes')" id="tab-routes" class="pb-3 px-4 transition-all text-gray-400 hidden">作業路線庫</button>
+                            </div>
+                            <div class="flex gap-2 pb-1">
+                                <button onclick="exportDatabase()" title="備份資料庫" class="px-3 py-1 text-[10px] font-bold border-2 border-blue-200 text-blue-500 rounded-lg hover:bg-blue-50 transition flex items-center gap-1">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                                    備份
+                                </button>
+                                <button onclick="triggerImport()" title="還原資料庫" class="px-3 py-1 text-[10px] font-bold border-2 border-orange-200 text-orange-500 rounded-lg hover:bg-orange-50 transition flex items-center gap-1">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l4 4m-4-4h12"></path></svg>
+                                    還原
+                                </button>
+                                <input type="file" id="dbFileInput" class="hidden" accept=".json" onchange="importDatabase(event)">
+                            </div>
                         </div>
 
-                        <!-- 鑰匙管理 -->
+                        <!-- 鑰匙管理分頁 -->
                         <div id="dbSection-accounts">
+                            <div class="mb-4">
+                                <div class="relative">
+                                    <input type="text" id="dbSearchInput" oninput="renderDatabaseTable()" placeholder="快速搜尋店名或帳號..." class="w-full p-2.5 pl-10 text-sm border-2 border-gray-100 rounded-xl outline-none focus:border-green-400 transition-all font-bold">
+                                    <svg class="w-5 h-5 absolute left-3 top-2.5 text-gray-400 font-bold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                </div>
+                            </div>
+
                             <div class="flex justify-end mb-4 gap-2">
-                                <button onclick="toggleDbImportMode()" class="text-sm bg-gray-50 hover:bg-gray-200 px-4 py-2 rounded-lg border border-gray-300 font-bold">匯入 TSV</button>
-                                <button onclick="clearAllAccounts()" class="text-sm bg-white text-red-500 hover:bg-red-50 px-4 py-2 rounded-lg border-2 border-red-200 font-bold">清空鑰匙庫</button>
+                                <button onclick="toggleDbImportMode()" class="text-sm bg-gray-50 hover:bg-gray-200 px-4 py-2 rounded-lg border border-gray-300 font-bold transition-all flex items-center gap-1">
+                                    批量匯入
+                                </button>
+                                <button onclick="clearAllAccounts()" class="text-sm bg-white text-red-500 hover:bg-red-50 px-4 py-2 rounded-lg border-2 border-red-200 font-bold transition-all shadow-sm">清空鑰匙庫</button>
                             </div>
                             <div id="dbImportContainer" class="hidden mb-6 p-4 bg-green-50 rounded-xl border-2 border-green-200 shadow-inner">
                                 <textarea id="dbBatchInput" rows="4" class="w-full p-3 text-sm border border-green-200 rounded-lg outline-none shadow-sm" placeholder="帳號 [Tab] 店名"></textarea>
@@ -297,19 +309,26 @@
                                 </div>
                             </div>
                             <div class="grid grid-cols-12 gap-3 mb-4 bg-gray-50 p-3 rounded-xl border-2 border-dashed border-green-200">
-                                <div class="col-span-5"><input type="text" id="newDbStore" placeholder="店名" class="w-full p-2.5 text-sm border-2 rounded-lg"></div>
-                                <div class="col-span-5"><input type="text" id="newDbKey" placeholder="帳號" class="w-full p-2.5 text-sm border-2 rounded-lg"></div>
-                                <div class="col-span-2"><button onclick="addDbEntry()" class="w-full py-2.5 bg-green-600 text-white text-sm font-bold rounded-lg shadow-sm">新增</button></div>
+                                <div class="col-span-5"><input type="text" id="newDbStore" placeholder="店名" class="w-full p-2.5 text-sm border-2 rounded-lg outline-none font-bold"></div>
+                                <div class="col-span-5"><input type="text" id="newDbKey" placeholder="帳號" class="w-full p-2.5 text-sm border-2 rounded-lg outline-none font-bold"></div>
+                                <div class="col-span-2"><button onclick="addDbEntry()" class="w-full py-2.5 bg-green-600 text-white text-sm font-bold rounded-lg shadow-md transition-all">新增</button></div>
                             </div>
                             <div class="max-h-[300px] overflow-y-auto border-2 rounded-xl border-gray-50">
-                                <table class="w-full text-sm text-left"><tbody id="dbTableBody" class="divide-y divide-gray-100"></tbody></table>
+                                <table class="w-full text-sm text-left"><tbody id="dbTableBody" class="divide-y divide-gray-100 font-bold text-gray-700"></tbody></table>
                             </div>
                         </div>
 
-                        <!-- 路線模板管理 -->
+                        <!-- 路線模板管理分頁 -->
                         <div id="dbSection-routes" class="hidden">
+                            <div class="mb-4">
+                                <div class="relative">
+                                    <input type="text" id="routeSearchInput" oninput="renderRouteTable()" placeholder="快速搜尋路線名稱或店名..." class="w-full p-2.5 pl-10 text-sm border-2 border-gray-100 rounded-xl outline-none focus:border-green-400 transition-all font-bold">
+                                    <svg class="w-5 h-5 absolute left-3 top-2.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                </div>
+                            </div>
+
                             <div class="flex justify-end mb-4 gap-2">
-                                <button onclick="toggleRouteDbImportMode()" class="text-sm bg-gray-50 hover:bg-gray-200 px-4 py-2 rounded-lg border border-gray-300 font-bold transition-all">匯入路線</button>
+                                <button onclick="toggleRouteDbImportMode()" class="text-sm bg-gray-50 hover:bg-gray-200 px-4 py-2 rounded-lg border border-gray-300 font-bold transition-all flex items-center gap-1">匯入路線</button>
                                 <button onclick="clearAllRouteTemplates()" class="text-sm bg-white text-red-500 hover:bg-red-50 px-4 py-2 rounded-lg border-2 border-red-200 font-bold shadow-sm transition-all">清空模板庫</button>
                             </div>
                             <div id="routeDbImportContainer" class="hidden mb-6 p-4 bg-green-50 rounded-xl border-2 border-green-200 shadow-inner">
@@ -319,42 +338,42 @@
                                 </div>
                             </div>
                             <div class="grid grid-cols-12 gap-3 mb-4 bg-gray-50 p-3 rounded-xl border-2 border-dashed border-green-200">
-                                <div class="col-span-3"><input type="text" id="newRouteId" placeholder="模板(如1N7)" class="w-full p-2.5 text-sm border-2 rounded-lg"></div>
-                                <div class="col-span-7"><input type="text" id="newRouteStores" placeholder="包含店名(逗號隔開)" class="w-full p-2.5 text-sm border-2 rounded-lg"></div>
+                                <div class="col-span-3"><input type="text" id="newRouteId" placeholder="模板(如1N7)" class="w-full p-2.5 text-sm border-2 rounded-lg outline-none font-bold"></div>
+                                <div class="col-span-7"><input type="text" id="newRouteStores" placeholder="店名(逗號隔開)" class="w-full p-2.5 text-sm border-2 rounded-lg outline-none font-bold"></div>
                                 <div class="col-span-2"><button onclick="addRouteTemplate()" class="w-full py-2.5 bg-green-600 text-white text-sm font-bold rounded-lg shadow-sm">新增</button></div>
                             </div>
                             <div class="max-h-[300px] overflow-y-auto border-2 rounded-xl border-gray-50">
-                                <table class="w-full text-sm text-left"><tbody id="routeTableBody" class="divide-y divide-gray-100"></tbody></table>
+                                <table class="w-full text-sm text-left"><tbody id="routeTableBody" class="divide-y divide-gray-100 font-bold text-gray-700"></tbody></table>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- 4. 右側：預覽 (FINAL) -->
+            <!-- 4. 右側：即時預覽 -->
             <div class="lg:col-span-5">
-                <div class="main-card p-6 sticky top-6 bg-white border-t-8 border-purple-500 h-full flex flex-col shadow-xl">
+                <div class="main-card p-6 sticky top-6 bg-white border-t-8 border-purple-500 flex flex-col shadow-xl">
                     <div class="flex items-center justify-between mb-6">
                         <div class="flex items-center">
-                            <span class="bg-purple-100 text-purple-700 text-sm font-bold px-3 py-1 rounded-full mr-3">FINAL</span>
+                            <span class="bg-purple-100 text-purple-700 text-sm font-bold px-3 py-1 rounded-full mr-3 shadow-sm">FINAL</span>
                             <h2 class="text-xl font-bold text-gray-800">即時預覽</h2>
                         </div>
-                        <button onclick="copyToClipboard()" class="text-base bg-blue-600 text-white px-5 py-2.5 rounded-full font-bold hover:bg-blue-700 transition shadow-lg">
+                        <button onclick="copyToClipboard()" class="text-base bg-blue-600 text-white px-5 py-2.5 rounded-full font-bold hover:bg-blue-700 transition shadow-lg flex items-center gap-2">
                             一鍵複製內容
                         </button>
                     </div>
-                    <div id="previewArea" class="bg-gray-800 text-green-400 p-6 rounded-2xl font-mono text-base leading-relaxed flex-grow whitespace-pre-wrap border-2 border-gray-700 shadow-inner overflow-y-auto min-h-[500px] max-h-[850px]"></div>
+                    <div id="previewArea" class="bg-gray-800 text-green-400 p-6 rounded-2xl font-mono text-base leading-relaxed flex-grow whitespace-pre-wrap border-2 border-gray-700 shadow-inner overflow-y-auto min-h-[400px] max-h-[700px]"></div>
                     <p id="copyMsg" class="text-center text-green-600 text-sm font-bold mt-4 opacity-0 transition-opacity">已成功複製！</p>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- 確認彈窗 -->
+    <!-- 確認視窗 -->
     <div id="confirmModal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center p-4 transition-all backdrop-blur-sm">
         <div class="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl scale-110">
             <h3 id="confirmTitle" class="text-xl font-bold text-gray-800 mb-4">確認操作？</h3>
-            <p id="confirmMessage" class="text-gray-600 mb-8">此動作無法復原，您確定要繼續嗎？</p>
+            <p id="confirmMessage" class="text-gray-600 mb-8 font-medium">此動作無法復原，您確定要繼續嗎？</p>
             <div class="flex gap-4">
                 <button onclick="closeModal()" class="flex-1 py-3 bg-gray-100 text-gray-600 font-bold rounded-xl hover:bg-gray-200 transition">取消</button>
                 <button id="confirmBtn" class="flex-1 py-3 bg-red-500 text-white font-bold rounded-xl shadow-lg hover:bg-red-600 transition">確定</button>
@@ -362,8 +381,54 @@
         </div>
     </div>
 
+    <!-- 編輯鑰匙資料彈窗 -->
+    <div id="editModal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center p-4 transition-all backdrop-blur-sm">
+        <div class="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl text-left">
+            <h3 class="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+                <span class="p-2 bg-blue-50 text-blue-600 rounded-lg">✏️</span> 編輯鑰匙資料
+            </h3>
+            <div class="space-y-4 mb-8">
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">店名</label>
+                    <input type="text" id="editStoreName" class="w-full p-3 border-2 rounded-xl outline-none focus:border-blue-400 font-bold">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">帳號</label>
+                    <input type="text" id="editKeyAccount" class="w-full p-3 border-2 rounded-xl outline-none focus:border-blue-400 font-bold">
+                </div>
+            </div>
+            <div class="flex gap-4">
+                <button onclick="closeEditModal()" class="flex-1 py-3 bg-gray-100 text-gray-600 font-bold rounded-xl">取消</button>
+                <button id="saveEditBtn" class="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg">儲存修改</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 編輯路線資料彈窗 -->
+    <div id="routeEditModal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center p-4 transition-all backdrop-blur-sm">
+        <div class="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl text-left">
+            <h3 class="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+                <span class="p-2 bg-green-50 text-green-600 rounded-lg">🗺️</span> 編輯作業路線
+            </h3>
+            <div class="space-y-4 mb-8">
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">路線名稱 (例如 1N7)</label>
+                    <input type="text" id="editRouteId" class="w-full p-3 border-2 rounded-xl outline-none focus:border-green-400 font-bold">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">包含店點 (一行一個)</label>
+                    <textarea id="editRouteStores" rows="8" class="w-full p-3 border-2 rounded-xl outline-none focus:border-green-400 font-bold" placeholder="三民中和 - 智取店&#10;永康勝學 - 智取店"></textarea>
+                </div>
+            </div>
+            <div class="flex gap-4">
+                <button onclick="closeRouteEditModal()" class="flex-1 py-3 bg-gray-100 text-gray-600 font-bold rounded-xl">取消</button>
+                <button id="saveRouteEditBtn" class="flex-1 py-3 bg-green-600 text-white font-bold rounded-xl shadow-lg">儲存修改</button>
+            </div>
+        </div>
+    </div>
+
     <script>
-        // --- 初始化操作 ---
+        // --- 核心邏輯 ---
         document.addEventListener('DOMContentLoaded', () => { 
             addStoreRow(); 
             onTypeChange();
@@ -371,223 +436,221 @@
 
         window.onTypeChange = function() {
             const vType = document.getElementById('volumeType').value;
-            const warehouseContainer = document.getElementById('warehouseContainer');
-            const deliveryContainer = document.getElementById('deliveryTypeContainer');
-            const deliverySelect = document.getElementById('deliveryType');
-            const templateContainer = document.getElementById('templateSelectionContainer');
-            const editingLabel = document.getElementById('currentEditingType');
-            const routeTabBtn = document.getElementById('tab-routes');
+            const wh = document.getElementById('warehouseContainer');
+            const dtContainer = document.getElementById('deliveryTypeContainer');
+            const dtSelect = document.getElementById('deliveryType');
+            const tmpl = document.getElementById('templateSelectionContainer');
+            const editLabel = document.getElementById('currentEditingType');
+            const routeTab = document.getElementById('tab-routes');
             
-            if (vType === '爆收NDD') {
-                deliverySelect.innerHTML = `<option value="隔日到貨">隔日到貨</option><option value="先收NDD，剩餘載量收一般離店貨">先收NDD，剩餘載量收一般離店貨</option>`;
-            } else {
-                deliverySelect.innerHTML = `<option value="收一般離店貨">收一般離店貨</option>`;
-            }
+            dtSelect.innerHTML = (vType === '爆收NDD') ? 
+                `<option value="隔日到貨">隔日到貨</option><option value="先收NDD，剩餘載量收一般離店貨">先收NDD，剩餘載量收一般離店貨</option>` : 
+                `<option value="收一般離店貨">收一般離店貨</option>`;
 
             if (vType === '爆送') {
-                warehouseContainer.classList.remove('hidden');
-                deliveryContainer.classList.add('hidden');
-                templateContainer.classList.remove('hidden'); 
-                routeTabBtn.classList.remove('hidden');    
+                wh.classList.remove('hidden'); dtContainer.classList.add('hidden'); tmpl.classList.remove('hidden'); routeTab.classList.remove('hidden');    
             } else {
-                warehouseContainer.classList.add('hidden');
-                deliveryContainer.classList.remove('hidden');
-                templateContainer.classList.add('hidden'); 
-                routeTabBtn.classList.add('hidden');       
-                switchDbTab('accounts');                   
+                wh.classList.add('hidden'); dtContainer.classList.remove('hidden'); tmpl.classList.add('hidden'); routeTab.classList.add('hidden'); switchDbTab('accounts');                   
             }
             
-            editingLabel.textContent = `當前維護：${vType}`;
-            renderDatabaseTable(); renderRouteTable(); refreshTemplateSelector(); handleAutoLookup(); updatePreview();
+            editLabel.textContent = `模式：${vType}`;
+            renderDatabaseTable(); renderRouteTable(); refreshTemplateSelector(); updateStoreDataList(); handleAutoLookup(); updatePreview();
         }
 
-        window.switchDbTab = function(tab) {
-            const accountsTab = document.getElementById('tab-accounts');
-            const routesTab = document.getElementById('tab-routes');
+        window.switchDbTab = (tab) => {
+            const accBtn = document.getElementById('tab-accounts');
+            const rteBtn = document.getElementById('tab-routes');
             document.getElementById('dbSection-accounts').classList.toggle('hidden', tab !== 'accounts');
             document.getElementById('dbSection-routes').classList.toggle('hidden', tab !== 'routes');
-            if (tab === 'accounts') {
-                accountsTab.classList.add('tab-active'); accountsTab.classList.remove('text-gray-400');
-                routesTab.classList.remove('tab-active'); routesTab.classList.add('text-gray-400');
-            } else {
-                routesTab.classList.add('tab-active'); routesTab.classList.remove('text-gray-400');
-                accountsTab.classList.remove('tab-active'); accountsTab.classList.add('text-gray-400');
-            }
+            if (tab === 'accounts') { accBtn.classList.add('tab-active'); accBtn.classList.remove('text-gray-400'); rteBtn.classList.remove('tab-active'); rteBtn.classList.add('text-gray-400'); } 
+            else { rteBtn.classList.add('tab-active'); rteBtn.classList.remove('text-gray-400'); accBtn.classList.remove('tab-active'); accBtn.classList.add('text-gray-400'); }
         }
 
-        window.handleAutoLookup = function() {
+        window.handleAutoLookup = () => {
             const vType = document.getElementById('volumeType').value;
-            const rows = document.querySelectorAll('.store-row');
-            const openAccountField = document.getElementById('openAccount');
-            let matchedKeys = [];
-            rows.forEach(row => {
+            const openAcc = document.getElementById('openAccount');
+            let matched = [];
+            document.querySelectorAll('.store-row').forEach(row => {
                 const name = row.querySelector('.store-name').value.trim();
                 if (name && window.accountDatabase[vType]) {
-                    const key = window.accountDatabase[vType][name];
-                    if (key && !matchedKeys.includes(key)) matchedKeys.push(key);
+                    const k = window.accountDatabase[vType][name];
+                    if (k && !matched.includes(k)) matched.push(k);
                 }
             });
-            openAccountField.value = matchedKeys.length > 0 ? matchedKeys.sort().join('/') : '';
+            openAcc.value = matched.sort().join('/');
+        }
+
+        function updateStoreDataList() {
+            const vType = document.getElementById('volumeType').value;
+            const dl = document.getElementById('storeDataList');
+            const data = window.accountDatabase[vType] || {};
+            dl.innerHTML = "";
+            Object.keys(data).sort().forEach(n => { const opt = document.createElement('option'); opt.value = n; dl.appendChild(opt); });
         }
 
         function renderDatabaseTable() {
             const vType = document.getElementById('volumeType').value;
-            const tableBody = document.getElementById('dbTableBody');
+            const search = document.getElementById('dbSearchInput').value.toLowerCase();
+            const body = document.getElementById('dbTableBody');
             const data = window.accountDatabase[vType] || {};
-            const storeNames = Object.keys(data).sort();
-            tableBody.innerHTML = storeNames.length === 0 ? '<tr><td colspan="3" class="p-6 text-center text-gray-400 font-bold italic">尚無帳號資料</td></tr>' : '';
-            storeNames.forEach(name => {
+            let names = Object.keys(data).sort();
+            if (search) names = names.filter(n => n.toLowerCase().includes(search) || data[n].toLowerCase().includes(search));
+            body.innerHTML = names.length === 0 ? '<tr><td colspan="3" class="p-6 text-center text-gray-400 italic">查無資料</td></tr>' : '';
+            names.forEach(n => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td class="p-3 border-b">${name}</td><td class="p-3 border-b text-blue-600 font-mono">${data[name]}</td><td class="p-3 border-b text-center"><button onclick="deleteDbEntry('${name}')" class="text-red-400 font-bold text-2xl hover:text-red-600">×</button></td>`;
-                tableBody.appendChild(tr);
-            });
-        }
-
-        function renderRouteTable() {
-            const vType = document.getElementById('volumeType').value;
-            const body = document.getElementById('routeTableBody');
-            const data = window.routeTemplates[vType] || {};
-            const ids = Object.keys(data).sort();
-            body.innerHTML = ids.length === 0 ? '<tr><td colspan="3" class="p-6 text-center text-gray-400 font-bold italic">尚無模板</td></tr>' : '';
-            ids.forEach(id => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `<td class="p-3 border-b font-bold text-blue-600">${id}</td><td class="p-3 border-b text-gray-500">${data[id].join(', ')}</td><td class="p-3 border-b text-center"><button onclick="deleteRouteTemplate('${id}')" class="text-red-400 font-bold text-2xl hover:text-red-600">×</button></td>`;
+                tr.innerHTML = `<td class="p-3 border-b">${n}</td><td class="p-3 border-b text-blue-600 font-mono">${data[n]}</td><td class="p-3 border-b text-center space-x-3"><button onclick="openEditModal('${n}', '${data[n]}')" class="text-blue-400">✏️</button><button onclick="deleteDbEntry('${n}')" class="text-red-300">×</button></td>`;
                 body.appendChild(tr);
             });
         }
 
+        let curEditName = null;
+        window.openEditModal = (name, key) => {
+            curEditName = name;
+            document.getElementById('editStoreName').value = name;
+            document.getElementById('editKeyAccount').value = key;
+            document.getElementById('editModal').classList.remove('hidden');
+            document.getElementById('saveEditBtn').onclick = () => {
+                const vType = document.getElementById('volumeType').value;
+                const newN = document.getElementById('editStoreName').value.trim();
+                const newK = document.getElementById('editKeyAccount').value.trim();
+                if (newN && newK) {
+                    if (newN !== curEditName) delete window.accountDatabase[vType][curEditName];
+                    window.accountDatabase[vType][newN] = newK;
+                    closeEditModal(); renderDatabaseTable(); updateStoreDataList(); handleAutoLookup(); updatePreview(); window.syncToCloud();
+                }
+            };
+        }
+        window.closeEditModal = () => { document.getElementById('editModal').classList.add('hidden'); curEditName = null; }
+
+        function renderRouteTable() {
+            const vType = document.getElementById('volumeType').value;
+            const search = document.getElementById('routeSearchInput').value.toLowerCase();
+            const body = document.getElementById('routeTableBody');
+            const data = window.routeTemplates[vType] || {};
+            let ids = Object.keys(data).sort();
+            if (search) ids = ids.filter(id => id.toLowerCase().includes(search) || data[id].some(s => s.toLowerCase().includes(search)));
+            body.innerHTML = ids.length === 0 ? '<tr><td colspan="3" class="p-6 text-center text-gray-400 italic">尚無模板</td></tr>' : '';
+            ids.forEach(id => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td class="p-3 border-b font-bold text-blue-600">${id}</td><td class="p-3 border-b text-gray-500 text-xs">${data[id].join(', ')}</td><td class="p-3 border-b text-center space-x-3"><button onclick="openRouteEditModal('${id}')" class="text-blue-400">✏️</button><button onclick="deleteRouteTemplate('${id}')" class="text-red-300">×</button></td>`;
+                body.appendChild(tr);
+            });
+        }
+
+        let curRouteId = null;
+        window.openRouteEditModal = (id) => {
+            curRouteId = id;
+            const vType = document.getElementById('volumeType').value;
+            const stores = window.routeTemplates[vType][id] || [];
+            document.getElementById('editRouteId').value = id;
+            document.getElementById('editRouteStores').value = stores.join('\n');
+            document.getElementById('routeEditModal').classList.remove('hidden');
+            document.getElementById('saveRouteEditBtn').onclick = () => {
+                const nid = document.getElementById('editRouteId').value.trim();
+                const nstr = document.getElementById('editRouteStores').value.trim();
+                if (nid && nstr) {
+                    if (nid !== curRouteId) delete window.routeTemplates[vType][curRouteId];
+                    window.routeTemplates[vType][nid] = nstr.split(/[\n\r,，]+/).map(s => s.trim()).filter(s => s !== "");
+                    closeRouteEditModal(); renderRouteTable(); refreshTemplateSelector(); window.syncToCloud();
+                }
+            };
+        }
+        window.closeRouteEditModal = () => { document.getElementById('routeEditModal').classList.add('hidden'); curRouteId = null; }
+
         function refreshTemplateSelector() {
             const vType = document.getElementById('volumeType').value;
-            const selector = document.getElementById('routeTemplateSelector');
-            selector.innerHTML = '<option value="">-- 如果知道路線，請選擇路線 --</option>';
+            const sel = document.getElementById('routeTemplateSelector');
+            sel.innerHTML = '<option value="">-- 如果知道哪條路線，請選擇路線 --</option>';
             const data = window.routeTemplates[vType] || {};
-            Object.keys(data).sort().forEach(id => {
-                const opt = document.createElement('option');
-                opt.value = id; opt.textContent = id;
-                selector.appendChild(opt);
-            });
+            Object.keys(data).sort().forEach(id => { const opt = document.createElement('option'); opt.value = id; opt.textContent = id; sel.appendChild(opt); });
         }
 
-        window.addDbEntry = function() {
-            const vType = document.getElementById('volumeType').value;
-            const s = document.getElementById('newDbStore').value.trim(), k = document.getElementById('newDbKey').value.trim();
-            if (s && k) { window.accountDatabase[vType][s] = k; document.getElementById('newDbStore').value = ''; document.getElementById('newDbKey').value = ''; renderDatabaseTable(); handleAutoLookup(); updatePreview(); window.syncToCloud(); }
-        }
-        window.deleteDbEntry = function(name) {
-            const vType = document.getElementById('volumeType').value;
-            delete window.accountDatabase[vType][name]; renderDatabaseTable(); handleAutoLookup(); updatePreview(); window.syncToCloud();
-        }
-        window.addRouteTemplate = function() {
-            const vType = document.getElementById('volumeType').value;
-            const id = document.getElementById('newRouteId').value.trim(), storeStr = document.getElementById('newRouteStores').value.trim();
-            if (id && storeStr) { 
-                if (!window.routeTemplates[vType]) window.routeTemplates[vType] = {};
-                window.routeTemplates[vType][id] = storeStr.split(/[,，\s\n]+/).filter(s => s !== ""); 
-                renderRouteTable(); refreshTemplateSelector();
-                document.getElementById('newRouteId').value = ''; document.getElementById('newRouteStores').value = ''; window.syncToCloud();
-            }
-        }
-        window.deleteRouteTemplate = function(id) {
-            const vType = document.getElementById('volumeType').value;
-            delete window.routeTemplates[vType][id]; renderRouteTable(); refreshTemplateSelector(); window.syncToCloud();
-        }
+        // --- 備份功能 ---
+        window.exportDatabase = () => {
+            const data = { accountDatabase: window.accountDatabase, routeTemplates: window.routeTemplates, time: new Date().toLocaleString() };
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = `爆量工具備份_${new Date().toLocaleDateString()}.json`; a.click(); URL.revokeObjectURL(url);
+        };
+        window.triggerImport = () => document.getElementById('dbFileInput').click();
+        window.importDatabase = (e) => {
+            const file = e.target.files[0]; if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                try {
+                    const d = JSON.parse(evt.target.result);
+                    if (d.accountDatabase && d.routeTemplates) {
+                        showConfirm("還原資料庫？", "還原將覆蓋目前的雲端資料且無法撤銷，確定要繼續嗎？", () => {
+                            window.accountDatabase = d.accountDatabase; window.routeTemplates = d.routeTemplates;
+                            renderDatabaseTable(); renderRouteTable(); refreshTemplateSelector(); updateStoreDataList(); handleAutoLookup(); updatePreview(); window.syncToCloud();
+                        });
+                    }
+                } catch (err) { alert("讀取失敗"); }
+            };
+            reader.readAsText(file); e.target.value = "";
+        };
 
-        window.showConfirm = function(title, message, callback) {
-            document.getElementById('confirmTitle').textContent = title;
-            document.getElementById('confirmMessage').textContent = message;
-            const btn = document.getElementById('confirmBtn');
-            btn.onclick = () => { callback(); closeModal(); };
-            document.getElementById('confirmModal').classList.remove('hidden');
-        }
-        window.closeModal = function() { document.getElementById('confirmModal').classList.add('hidden'); }
-
-        window.clearAllAccounts = function() {
-            const vType = document.getElementById('volumeType').value;
-            showConfirm("清空鑰匙庫？", `確認要清空「${vType}」專屬的所有帳號資料嗎？`, () => {
-                window.accountDatabase[vType] = {}; renderDatabaseTable(); handleAutoLookup(); updatePreview(); window.syncToCloud();
-            });
-        }
-        window.clearAllRouteTemplates = function() {
-            const vType = document.getElementById('volumeType').value;
-            showConfirm("清空模板庫？", `確認要清空「${vType}」專屬的所有路線模板嗎？`, () => {
-                window.routeTemplates[vType] = {}; renderRouteTable(); refreshTemplateSelector(); window.syncToCloud();
-            });
-        }
-        window.clearAllStores = function() {
-            showConfirm("清空清單？", "確認要刪除當前輸入的所有店點嗎？", () => {
-                document.getElementById('storeList').innerHTML = ''; addStoreRow(); updatePreview();
-            });
-        }
-
-        window.addStoreRow = function(name = '', note = '') {
-            const storeList = document.getElementById('storeList');
+        // --- 基礎增刪 ---
+        window.addStoreRow = (n = '', nt = '') => {
             const id = 'row_' + Date.now() + Math.random().toString(36).substr(2, 4);
             const div = document.createElement('div');
-            div.className = 'store-row flex items-center gap-3 p-3 border-2 rounded-xl relative group transition-all hover:border-blue-300 bg-white shadow-sm mb-2';
+            div.className = 'store-row flex items-center gap-3 p-3 border-2 rounded-xl transition-all hover:border-blue-300 bg-white mb-2';
             div.id = id;
-            div.innerHTML = `<div class="flex-grow grid grid-cols-2 gap-4"><input type="text" placeholder="店名" class="store-name p-2.5 text-base border-none bg-transparent outline-none font-bold text-gray-700" value="${name}"><input type="text" placeholder="備註" class="store-note p-2.5 text-base border-none bg-transparent outline-none text-gray-500 italic" value="${note}"></div><button onclick="removeRow('${id}')" class="text-gray-300 hover:text-red-500 px-3 font-bold text-3xl transition">×</button>`;
-            storeList.appendChild(div);
+            div.innerHTML = `<div class="flex-grow grid grid-cols-2 gap-4"><input type="text" list="storeDataList" placeholder="店名" class="store-name p-2 border-none bg-transparent outline-none font-bold text-gray-700" value="${n}"><input type="text" placeholder="備註" class="store-note p-2 border-none bg-transparent outline-none text-gray-500 italic font-medium" value="${nt}"></div><button onclick="removeRow('${id}')" class="text-gray-300 font-bold text-2xl px-2">×</button>`;
+            document.getElementById('storeList').appendChild(div);
             div.querySelectorAll('input').forEach(i => i.addEventListener('input', () => { handleAutoLookup(); updatePreview(); }));
             updatePreview();
         }
-        window.removeRow = function(id) { if (document.querySelectorAll('.store-row').length > 1) { document.getElementById(id).remove(); handleAutoLookup(); updatePreview(); } }
-        window.toggleBatchMode = function() { document.getElementById('batchContainer').classList.toggle('hidden'); }
-        window.processBatch = function() {
+        window.removeRow = (id) => { if (document.querySelectorAll('.store-row').length > 1) { document.getElementById(id).remove(); handleAutoLookup(); updatePreview(); } }
+        window.toggleBatchMode = () => document.getElementById('batchContainer').classList.toggle('hidden');
+        window.processBatch = () => {
             const input = document.getElementById('batchInput').value; if (!input.trim()) return;
-            const firstRow = document.querySelector('.store-row'); if (firstRow && !firstRow.querySelector('.store-name').value) firstRow.remove();
+            const first = document.querySelector('.store-row'); if (first && !first.querySelector('.store-name').value) first.remove();
             input.split(/\r?\n/).filter(l => l.trim() !== "").forEach(line => {
                 let name = line.trim(), note = ""; const bm = line.match(/(.*)(<.*>)$/);
                 if (bm) { name = bm[1].trim(); note = bm[2].trim(); }
                 else if (line.includes(" - ")) {
-                    const parts = line.split(" - ");
-                    const lastPart = parts[parts.length - 1].trim();
-                    if (lastPart.includes("智取店")) { name = line.trim(); note = ""; }
-                    else { const idx = line.lastIndexOf(" - "); name = line.substring(0, idx).trim(); note = lastPart; }
+                    const p = line.split(" - "); const last = p[p.length - 1].trim();
+                    if (last.includes("智取店")) { name = line.trim(); note = ""; }
+                    else { const idx = line.lastIndexOf(" - "); name = line.substring(0, idx).trim(); note = last; }
                 }
                 addStoreRow(name, note);
             });
             document.getElementById('batchInput').value = ""; toggleBatchMode(); handleAutoLookup(); updatePreview();
         }
-
-        window.toggleDbImportMode = function() { document.getElementById('dbImportContainer').classList.toggle('hidden'); }
-        window.processDbBatch = function() {
-            const input = document.getElementById('dbBatchInput').value; const vType = document.getElementById('volumeType').value;
-            if (!input.trim()) return;
+        window.toggleDbImportMode = () => document.getElementById('dbImportContainer').classList.toggle('hidden');
+        window.processDbBatch = () => {
+            const input = document.getElementById('dbBatchInput').value; if (!input.trim()) return;
+            const vType = document.getElementById('volumeType').value;
             input.split(/\r?\n/).forEach(line => {
                 let p = line.split('\t'); if (p.length < 2) p = line.split(',');
-                if (p.length >= 2) { const k = p[0].trim(); const s = p[1].trim(); if (k && s && k !== "帳號" && k !== "店名") window.accountDatabase[vType][s] = k; }
+                if (p.length >= 2) { const k = p[0].trim(); const s = p[1].trim(); if (k && s && k !== "帳號") window.accountDatabase[vType][s] = k; }
             });
-            document.getElementById('dbBatchInput').value = ""; toggleDbImportMode(); renderDatabaseTable(); handleAutoLookup(); updatePreview(); window.syncToCloud();
+            document.getElementById('dbBatchInput').value = ""; toggleDbImportMode(); renderDatabaseTable(); updateStoreDataList(); handleAutoLookup(); updatePreview(); window.syncToCloud();
         }
-        window.toggleRouteDbImportMode = function() { document.getElementById('routeDbImportContainer').classList.toggle('hidden'); }
-        window.processRouteDbBatch = function() {
-            const input = document.getElementById('routeDbBatchInput').value; const vType = document.getElementById('volumeType').value;
-            if (!input.trim()) return;
-            input.split(/\r?\n/).filter(l => l.trim() !== "").forEach(line => {
-                let parts = line.split('\t'); if (parts.length < 2) parts = line.split(',');
-                if (parts.length >= 2) {
-                    let p0 = parts[0].trim(), p1 = parts[1].trim(); if (!p0 || !p1 || p0 === "店名" || p0 === "帳號") return;
-                    let rid, sname; if (p0.length > p1.length || p0.includes('店')) { rid = p1; sname = p0; } else { rid = p0; sname = p1; }
+        window.toggleRouteDbImportMode = () => document.getElementById('routeDbImportContainer').classList.toggle('hidden');
+        window.processRouteDbBatch = () => {
+            const input = document.getElementById('routeDbBatchInput').value; if (!input.trim()) return;
+            const vType = document.getElementById('volumeType').value;
+            input.split(/\r?\n/).forEach(line => {
+                let p = line.split('\t'); if (p.length < 2) p = line.split(',');
+                if (p.length >= 2) {
+                    let rid, sname; if (p[0].trim().length > p[1].trim().length || p[0].includes('店')) { rid = p[1].trim(); sname = p[0].trim(); } else { rid = p[0].trim(); sname = p[1].trim(); }
                     if (!window.routeTemplates[vType]) window.routeTemplates[vType] = {};
                     if (!window.routeTemplates[vType][rid]) window.routeTemplates[vType][rid] = [];
-                    sname.split(/[,，]+/).filter(s => s.trim() !== "").forEach(s => {
-                        if (!window.routeTemplates[vType][rid].includes(s.trim())) window.routeTemplates[vType][rid].push(s.trim());
-                    });
+                    sname.split(/[\n\r,，]+/).map(s => s.trim()).filter(s => s !== "").forEach(s => { if (!window.routeTemplates[vType][rid].includes(s)) window.routeTemplates[vType][rid].push(s); });
                 }
             });
             document.getElementById('routeDbBatchInput').value = ""; toggleRouteDbImportMode(); renderRouteTable(); refreshTemplateSelector(); window.syncToCloud();
         }
-
-        window.toggleDbSection = function() {
+        window.toggleDbSection = () => {
             const area = document.getElementById('dbContentArea'), icon = document.getElementById('dbToggleIcon'), text = document.getElementById('dbToggleText');
             area.classList.toggle('hidden'); icon.style.transform = area.classList.contains('hidden') ? 'rotate(0deg)' : 'rotate(180deg)';
             text.textContent = area.classList.contains('hidden') ? '展開維護' : '收合管理';
         }
-        
-        window.applyRouteTemplate = function() {
-            const vType = document.getElementById('volumeType').value;
+        window.applyRouteTemplate = () => {
             const tid = document.getElementById('routeTemplateSelector').value;
-            const stores = window.routeTemplates[vType] ? window.routeTemplates[vType][tid] : null;
+            const stores = window.routeTemplates[document.getElementById('volumeType').value] ? window.routeTemplates[document.getElementById('volumeType').value][tid] : null;
             if (stores) { document.getElementById('storeList').innerHTML = ''; stores.forEach(n => addStoreRow(n)); handleAutoLookup(); updatePreview(); }
         }
 
@@ -597,39 +660,40 @@
             const vehicle = document.getElementById('vehicleType').value;
             const acc = document.getElementById('openAccount').value || '[帳號]';
             const dIdInput = document.getElementById('driverId').value.trim();
-            
-            let dIdDisplay = dIdInput || "請提供司機編號";
-            
-            const rows = document.querySelectorAll('.store-row');
-            let storeListText = "";
-            rows.forEach(row => {
+            let dId = dIdInput || "請提供司機編號";
+            let storeText = "";
+            document.querySelectorAll('.store-row').forEach(row => {
                 const sName = row.querySelector('.store-name').value;
                 const sNote = row.querySelector('.store-note').value;
                 if (sName) { 
                     let ns = sNote ? ((sNote.startsWith('<') && sNote.endsWith('>')) ? sNote : ` - ${sNote}`) : ''; 
-                    storeListText += `${sName}${ns}\n`; 
+                    storeText += `${sName}${ns}\n`; 
                 }
             });
-            if (!storeListText) storeListText = "[請輸入店點]\n";
-
+            if (!storeText) storeText = "[請輸入店點]\n";
             if (vType === '爆送') {
-                const wh = document.getElementById('warehouseType').value;
-                return `${route}\n${storeListText}車輛頓型: ${vehicle}\n開門帳號: ${acc}\n疊貨倉別: ${wh}\n司機編號: ${dIdDisplay}`;
-            } else {
-                const dt = document.getElementById('deliveryType').value;
-                return `${route}\n${storeListText}車輛頓型: ${vehicle}\n收貨類型: ${dt}\n開門帳號: ${acc}\n司機編號: ${dIdDisplay}`;
+                return `${route}\n${storeText}車輛頓型: ${vehicle}\n開門帳號: ${acc}\n疊貨倉別: ${document.getElementById('warehouseType').value}\n司機編號: ${dId}`;
             }
+            return `${route}\n${storeText}車輛頓型: ${vehicle}\n收貨類型: ${document.getElementById('deliveryType').value}\n開門帳號: ${acc}\n司機編號: ${dId}`;
         }
 
-        window.updatePreview = function() { 
-            const previewEl = document.getElementById('previewArea');
-            if (previewEl) previewEl.textContent = generateText(); 
-        };
-
-        window.copyToClipboard = function() {
+        window.updatePreview = () => { const el = document.getElementById('previewArea'); if (el) el.textContent = generateText(); };
+        window.copyToClipboard = () => {
             const t = generateText(), el = document.createElement('textarea'); el.value = t; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el);
             const m = document.getElementById('copyMsg'); m.style.opacity = '1'; setTimeout(() => m.style.opacity = '0', 2000);
         };
+        window.addDbEntry = () => {
+            const v = document.getElementById('volumeType').value, s = document.getElementById('newDbStore').value.trim(), k = document.getElementById('newDbKey').value.trim();
+            if (s && k) { window.accountDatabase[v][s] = k; document.getElementById('newDbStore').value = ''; document.getElementById('newDbKey').value = ''; renderDatabaseTable(); updateStoreDataList(); handleAutoLookup(); updatePreview(); window.syncToCloud(); }
+        }
+        window.deleteDbEntry = (n) => { delete window.accountDatabase[document.getElementById('volumeType').value][n]; renderDatabaseTable(); updateStoreDataList(); handleAutoLookup(); updatePreview(); window.syncToCloud(); }
+        window.addRouteTemplate = () => {
+            const v = document.getElementById('volumeType').value, id = document.getElementById('newRouteId').value.trim(), s = document.getElementById('newRouteStores').value.trim();
+            if (id && s) { if (!window.routeTemplates[v]) window.routeTemplates[v] = {}; window.routeTemplates[v][id] = s.split(/[\n\r,，]+/).map(i => i.trim()).filter(i => i !== ""); renderRouteTable(); refreshTemplateSelector(); document.getElementById('newRouteId').value = ''; document.getElementById('newRouteStores').value = ''; window.syncToCloud(); }
+        }
+        window.deleteRouteTemplate = (id) => { delete window.routeTemplates[document.getElementById('volumeType').value][id]; renderRouteTable(); refreshTemplateSelector(); window.syncToCloud(); }
+        window.showConfirm = (t, m, c) => { document.getElementById('confirmTitle').textContent = t; document.getElementById('confirmMessage').textContent = m; const b = document.getElementById('confirmBtn'); b.onclick = () => { c(); closeModal(); }; document.getElementById('confirmModal').classList.remove('hidden'); }
+        window.closeModal = () => document.getElementById('confirmModal').classList.add('hidden');
     </script>
 </body>
 </html>
