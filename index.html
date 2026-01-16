@@ -20,7 +20,15 @@
          * 如果您要在 GitHub 使用雲端同步，請到 Firebase 控制台申請專案，
          * 並將您的配置填入下方的 userFirebaseConfig 變數中。
          */
-        const userFirebaseConfig = null; // 例如: { apiKey: "...", authDomain: "...", ... }
+        const userFirebaseConfig = {
+  apiKey: "AIzaSyCVcHVz7MkOyx5j3eUfM0XN7rHDBJHYgg8",
+  authDomain: "louistools-bca8e.firebaseapp.com",
+  projectId: "louistools-bca8e",
+  storageBucket: "louistools-bca8e.firebasestorage.app",
+  messagingSenderId: "1099365589562",
+  appId: "1:1099365589562:web:555920151041d6bf494b03",
+  measurementId: "G-2QJKQ983TB"
+}; // 例如: { apiKey: "...", authDomain: "...", ... }
 
         // 優先順序：1. Canvas 環境配置 2. 使用者自定義配置
         const envConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
