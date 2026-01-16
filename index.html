@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>物流出貨資訊產生器 - 雲端同步版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // 全域變數定義
+        window.accountDatabase = { "爆收": {}, "爆送": {}, "爆收NDD": {} };
+        window.routeTemplates = { "爆收": {}, "爆送": {}, "爆收NDD": {} };
+
+        /**
+         * --- 自定義雲端配置說明 ---
+         * 如果您要在 GitHub 使用雲端同步，請到 Firebase 控制台申請專案，
+         * 並將您的配置填入下方的 userFirebaseConfig 變數中。
+         */
+        const userFirebaseConfig = null; // 例如: { apiKey: "...", authDomain: "...", ... }
+
+        // 優先順序：1. Canvas 環境配置 2. 使用者自定義配置
+        const envConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const finalConfig = envConfig || userFirebaseConfig;
+
+        if (finalConfig) {
+            try {
+                const app = initializeApp(finalConfig);
+                const auth = getAuth(app);
+                const db = getFirestore(app);
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'my-logistic-tool';
+
+                const initAuth = async () => {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                };
+
+                initAuth();
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        const statusEl = document.getElementById('cloudStatus');
+                        statusEl.textContent = "雲端同步中";
+                        statusEl.className = "bg-green-100 text-green-600 text-[10px] font-bold px-3 py-1 rounded-full shadow-sm";
+                        
+                        const accountRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'accountDb');
+                        onSnapshot(accountRef, (snap) => {
+                            if (snap.exists()) {
+                                window.accountDatabase = snap.data();
+                                renderDatabaseTable();
+                                handleAutoLookup();
+                            }
+                        }, (err) => console.error("帳號讀取失敗", err));
+
+                        const routeRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'routeTemplates');
+                        onSnapshot(routeRef, (snap) => {
+                            if (snap.exists()) {
+                                window.routeTemplates = snap.data();
+                                renderRouteTable();
+                                refreshTemplateSelector();
+                            }
+                        }, (err) => console.error("路線讀取失敗", err));
+                    }
+                });
+
+                window.syncToCloud = async () => {
+                    const user = auth.currentUser;
+                    if (!user) return;
+                    try {
+                        await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'accountDb'), window.accountDatabase);
+                        await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'routeTemplates'), window.routeTemplates);
+                        const statusEl = document.getElementById('cloudStatus');
+                        statusEl.textContent = "已儲存至雲端";
+                        setTimeout(() => { statusEl.textContent = "雲端同步中"; }, 2000);
+                    } catch (error) {
+                        console.error("儲存失敗", error);
+                    }
+                };
+            } catch (e) {
+                console.error("Firebase 初始化失敗", e);
+            }
+        } else {
+            // 完全離線/本地模式
+            document.addEventListener('DOMContentLoaded', () => {
+                const statusEl = document.getElementById('cloudStatus');
+                statusEl.textContent = "GitHub/本地模式 (無雲端同步)";
+                statusEl.className = "bg-orange-100 text-orange-600 text-[10px] font-bold px-3 py-1 rounded-full shadow-sm";
+            });
+            window.syncToCloud = () => { console.log("當前環境不支援雲端儲存"); };
+        }
+    </script>
+    <style>
+        body { background-color: #f0f2f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        .config-card { background: #ffffff; border-radius: 12px; border-left: 5px solid #3b82f6; }
+        .main-card { background: #ffffff; border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+        .db-card { background: #ffffff; border-radius: 12px; border-left: 5px solid #10b981; }
+        .store-row:nth-child(even) { background-color: #f9fafb; }
+        .transition-all { transition: all 0.3s ease-in-out; }
+        .tab-active { border-bottom: 3px solid #10b981 !important; color: #10b981 !important; font-weight: bold !important; }
+        .label-container { display: flex; flex-direction: column; justify-content: flex-end; height: 42px; margin-bottom: 6px; }
+    </style>
+</head>
+<body class="p-3 md:p-8">
+    <div class="max-w-[1400px] mx-auto"> 
+        
+        <!-- 置頂同步狀態列 -->
+        <div class="flex justify-end mb-2">
+            <span id="cloudStatus" class="bg-gray-100 text-gray-500 text-[10px] font-bold px-3 py-1 rounded-full shadow-sm">載入中...</span>
+        </div>
+
+        <!-- 1. 頂部：基本配置 (STEP 1) -->
+        <div class="config-card p-5 mb-6 shadow-md">
+            <div class="flex items-center mb-4">
+                <span class="bg-blue-100 text-blue-700 text-sm font-bold px-3 py-1 rounded-full mr-3">STEP 1</span>
+                <h2 class="text-base font-bold text-gray-700">基本配置 (固定資訊)</h2>
+            </div>
+            
+            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-12 gap-4">
+                <div class="lg:col-span-2">
+                    <div class="label-container">
+                        <label class="text-sm font-semibold text-blue-600 font-bold">當前爆量類型</label>
+                    </div>
+                    <select id="volumeType" onchange="onTypeChange()" class="w-full p-3 text-base border-2 border-blue-100 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-400 font-bold text-blue-800">
+                        <option value="爆收">爆收</option>
+                        <option value="爆送">爆送</option>
+                        <option value="爆收NDD">爆收NDD</option>
+                    </select>
+                </div>
+
+                <div class="lg:col-span-2">
+                    <div class="label-container">
+                        <span class="text-xs text-blue-500 font-bold leading-tight">(如Y2-1、Y2-1NDD)</span>
+                        <label class="text-sm font-semibold text-gray-700 font-bold">出貨路線</label>
+                    </div>
+                    <input type="text" id="route" oninput="updatePreview()" placeholder="請輸入路線" class="w-full p-3 text-base border-2 rounded-lg outline-none focus:ring-2 focus:ring-blue-400 border-gray-100 bg-blue-50/30">
+                </div>
+
+                <div class="lg:col-span-2">
+                    <div class="label-container">
+                        <label class="text-sm font-semibold text-gray-500 text-nowrap">車輛頓型</label>
+                    </div>
+                    <select id="vehicleType" onchange="updatePreview()" class="w-full p-3 text-base border-2 rounded-lg outline-none bg-white border-gray-100 px-2">
+                        <option value="6.2T">6.2T</option>
+                        <option value="8.5T">8.5T</option>
+                        <option value="11T">11T</option>
+                    </select>
+                </div>
+
+                <div class="lg:col-span-2">
+                    <div class="label-container">
+                        <label class="text-sm font-semibold text-gray-500">司機編號</label>
+                    </div>
+                    <input type="text" id="driverId" oninput="updatePreview()" placeholder="請輸入編號" class="w-full p-3 text-base border-2 rounded-lg outline-none focus:ring-2 focus:ring-blue-400 border-gray-100">
+                </div>
+
+                <div class="lg:col-span-1">
+                    <div class="label-container">
+                        <label class="text-sm font-semibold text-gray-400 text-nowrap">開門帳號</label>
+                    </div>
+                    <input type="text" id="openAccount" readonly placeholder="AUTO" class="w-full p-3 text-base border-2 border-gray-50 bg-gray-50 rounded-lg outline-none cursor-not-allowed text-gray-400 text-center">
+                </div>
+                
+                <div id="warehouseContainer" class="lg:col-span-3 hidden">
+                    <div class="label-container">
+                        <label class="text-sm font-semibold text-orange-600 font-bold">疊貨倉別</label>
+                    </div>
+                    <select id="warehouseType" onchange="updatePreview()" class="w-full p-3 text-base border-2 border-orange-200 rounded-lg outline-none bg-white">
+                        <option value="六倉">六倉</option>
+                        <option value="小南倉">小南倉</option>
+                    </select>
+                </div>
+                <div id="deliveryTypeContainer" class="lg:col-span-3">
+                    <div class="label-container">
+                        <label class="text-sm font-semibold text-gray-500 font-bold">收貨類型</label>
+                    </div>
+                    <select id="deliveryType" onchange="updatePreview()" class="w-full p-3 text-base border-2 border-gray-200 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-400">
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            
+            <!-- 2. 左側：店點清單 (STEP 2) -->
+            <div class="lg:col-span-7 space-y-6">
+                
+                <div class="main-card p-6">
+                    <div class="flex flex-wrap items-center justify-between mb-6 gap-3">
+                        <div class="flex items-center">
+                            <span class="bg-orange-100 text-orange-700 text-sm font-bold px-3 py-1 rounded-full mr-3">STEP 2</span>
+                            <h2 class="text-xl font-bold text-gray-800">店點清單</h2>
+                        </div>
+                    </div>
+
+                    <div id="templateSelectionContainer" class="hidden mb-6 p-4 bg-blue-50 rounded-xl border-2 border-blue-100 shadow-inner">
+                        <label class="block text-sm font-bold text-blue-700 mb-2.5">快速選擇作業路線模板:</label>
+                        <div class="flex gap-3">
+                            <select id="routeTemplateSelector" class="flex-grow p-3 text-base border-2 border-white rounded-lg bg-white outline-none shadow-sm">
+                                <option value="">-- 如果知道路線，請選擇路線 --</option>
+                            </select>
+                            <button onclick="applyRouteTemplate()" class="px-6 py-2 bg-blue-600 text-white text-base font-bold rounded-lg hover:bg-blue-700 transition shadow-md">確認載入</button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap gap-3 mb-6">
+                        <button onclick="addStoreRow()" class="flex-1 min-w-[120px] py-3 bg-white text-blue-600 text-base font-bold rounded-xl hover:bg-blue-50 border-2 border-blue-200 transition shadow-sm flex items-center justify-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+                            單筆新增
+                        </button>
+                        <button onclick="toggleBatchMode()" class="flex-1 min-w-[120px] py-3 bg-white text-gray-600 text-base font-bold rounded-xl hover:bg-gray-50 border-2 border-gray-200 transition shadow-sm flex items-center justify-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                            批次貼上
+                        </button>
+                        <button onclick="clearAllStores()" class="px-6 py-3 bg-white text-red-500 text-base font-bold rounded-xl hover:bg-red-50 border-2 border-red-200 transition shadow-sm flex items-center justify-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            全部清空
+                        </button>
+                    </div>
+
+                    <div id="batchContainer" class="hidden mb-6 p-4 bg-orange-50 rounded-xl border-2 border-orange-200 shadow-inner">
+                        <textarea id="batchInput" rows="5" class="w-full p-3 text-base border-none rounded-lg outline-none" placeholder="在此貼上多個店名..."></textarea>
+                        <div class="flex justify-end mt-3">
+                            <button onclick="processBatch()" class="px-6 py-2 bg-orange-500 text-white text-base font-bold rounded-lg hover:bg-orange-600 shadow-md">確認匯入</button>
+                        </div>
+                    </div>
+
+                    <div id="storeList" class="space-y-3 max-h-[450px] overflow-y-auto pr-2 border rounded-xl p-2 bg-gray-50/50 shadow-inner">
+                        <!-- 店點列 -->
+                    </div>
+                </div>
+
+                <!-- 3. 資料庫管理 (STEP 3) -->
+                <div class="db-card shadow-md overflow-hidden transition-all bg-white">
+                    <div class="p-5 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors" onclick="toggleDbSection()">
+                        <div class="flex items-center">
+                            <span class="bg-green-100 text-green-700 text-sm font-bold px-3 py-1 rounded-full mr-3">STEP 3</span>
+                            <h2 class="text-base font-bold text-gray-700">資料庫維護</h2>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span id="currentEditingType" class="text-xs font-bold text-green-600 px-3 py-1 bg-green-50 rounded-full border border-green-100">當前維護：爆收</span>
+                            <button class="text-gray-400 hover:text-green-600 flex items-center gap-1 text-sm font-bold transition-colors">
+                                <svg id="dbToggleIcon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 transform transition-transform duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                                <span id="dbToggleText">展開維護</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="dbContentArea" class="hidden p-6 border-t border-gray-100">
+                        <div class="flex gap-6 border-b-2 mb-6 text-sm font-bold">
+                            <button onclick="switchDbTab('accounts')" id="tab-accounts" class="pb-3 px-4 transition-all tab-active">鑰匙帳號庫</button>
+                            <button onclick="switchDbTab('routes')" id="tab-routes" class="pb-3 px-4 transition-all text-gray-400 hidden">作業路線庫</button>
+                        </div>
+
+                        <div id="dbSection-accounts">
+                            <div class="flex justify-end mb-4 gap-2">
+                                <button onclick="toggleDbImportMode()" class="text-sm bg-gray-50 hover:bg-gray-200 px-4 py-2 rounded-lg border border-gray-300 font-bold">匯入 TSV</button>
+                                <button onclick="clearAllAccounts()" class="text-sm bg-white text-red-500 hover:bg-red-50 px-4 py-2 rounded-lg border-2 border-red-200 font-bold">清空鑰匙庫</button>
+                            </div>
+                            <div id="dbImportContainer" class="hidden mb-6 p-4 bg-green-50 rounded-xl border-2 border-green-200 shadow-inner">
+                                <textarea id="dbBatchInput" rows="4" class="w-full p-3 text-sm border border-green-200 rounded-lg outline-none shadow-sm" placeholder="帳號 [Tab] 店名"></textarea>
+                                <div class="flex justify-end mt-3">
+                                    <button onclick="processDbBatch()" class="px-5 py-2 bg-green-600 text-white text-sm font-bold rounded-lg shadow-md">確認加入</button>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-12 gap-3 mb-4 bg-gray-50 p-3 rounded-xl border-2 border-dashed border-green-200">
+                                <div class="col-span-5"><input type="text" id="newDbStore" placeholder="店名" class="w-full p-2.5 text-sm border-2 rounded-lg outline-none"></div>
+                                <div class="col-span-5"><input type="text" id="newDbKey" placeholder="帳號" class="w-full p-2.5 text-sm border-2 rounded-lg outline-none"></div>
+                                <div class="col-span-2"><button onclick="addDbEntry()" class="w-full py-2.5 bg-green-600 text-white text-sm font-bold rounded-lg shadow-sm">新增</button></div>
+                            </div>
+                            <div class="max-h-[300px] overflow-y-auto border-2 rounded-xl border-gray-50">
+                                <table class="w-full text-sm text-left"><tbody id="dbTableBody" class="divide-y divide-gray-100"></tbody></table>
+                            </div>
+                        </div>
+
+                        <div id="dbSection-routes" class="hidden">
+                            <div class="flex justify-end mb-4 gap-2">
+                                <button onclick="toggleRouteDbImportMode()" class="text-sm bg-gray-50 hover:bg-gray-200 px-4 py-2 rounded-lg border border-gray-300 font-bold transition-all">匯入路線</button>
+                                <button onclick="clearAllRouteTemplates()" class="text-sm bg-white text-red-500 hover:bg-red-50 px-4 py-2 rounded-lg border-2 border-red-200 font-bold shadow-sm transition-all">清空模板庫</button>
+                            </div>
+                            <div id="routeDbImportContainer" class="hidden mb-6 p-4 bg-green-50 rounded-xl border-2 border-green-200 shadow-inner">
+                                <textarea id="routeDbBatchInput" rows="4" class="w-full p-3 text-sm border border-green-200 rounded-lg outline-none shadow-sm" placeholder="店名 [Tab] 路線名稱"></textarea>
+                                <div class="flex justify-end mt-3">
+                                    <button onclick="processRouteDbBatch()" class="px-5 py-2 bg-green-600 text-white text-sm font-bold rounded-lg shadow-md">智慧匯入</button>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-12 gap-3 mb-4 bg-gray-50 p-3 rounded-xl border-2 border-dashed border-green-200">
+                                <div class="col-span-3"><input type="text" id="newRouteId" placeholder="模板(如1N7)" class="w-full p-2.5 text-sm border-2 rounded-lg outline-none"></div>
+                                <div class="col-span-7"><input type="text" id="newRouteStores" placeholder="包含店名(逗號隔開)" class="w-full p-2.5 text-sm border-2 rounded-lg outline-none"></div>
+                                <div class="col-span-2"><button onclick="addRouteTemplate()" class="w-full py-2.5 bg-green-600 text-white text-sm font-bold rounded-lg shadow-sm">新增</button></div>
+                            </div>
+                            <div class="max-h-[300px] overflow-y-auto border-2 rounded-xl border-gray-50">
+                                <table class="w-full text-sm text-left"><tbody id="routeTableBody" class="divide-y divide-gray-100"></tbody></table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. 右側：預覽 (FINAL) -->
+            <div class="lg:col-span-5">
+                <div class="main-card p-6 sticky top-6 bg-white border-t-8 border-purple-500 h-full flex flex-col shadow-xl">
+                    <div class="flex items-center justify-between mb-6">
+                        <div class="flex items-center">
+                            <span class="bg-purple-100 text-purple-700 text-sm font-bold px-3 py-1 rounded-full mr-3">FINAL</span>
+                            <h2 class="text-xl font-bold text-gray-800">即時預覽</h2>
+                        </div>
+                        <button onclick="copyToClipboard()" class="text-base bg-blue-600 text-white px-5 py-2.5 rounded-full font-bold hover:bg-blue-700 transition shadow-lg flex items-center gap-2">
+                            一鍵複製內容
+                        </button>
+                    </div>
+                    <div id="previewArea" class="bg-gray-800 text-green-400 p-6 rounded-2xl font-mono text-base leading-relaxed flex-grow whitespace-pre-wrap border-2 border-gray-700 shadow-inner overflow-y-auto min-h-[500px] max-h-[850px]"></div>
+                    <p id="copyMsg" class="text-center text-green-600 text-sm font-bold mt-4 opacity-0 transition-opacity">已成功複製！</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 確認彈窗 -->
+    <div id="confirmModal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center p-4 transition-all backdrop-blur-sm">
+        <div class="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl scale-110">
+            <h3 id="confirmTitle" class="text-xl font-bold text-gray-800 mb-4">確認操作？</h3>
+            <p id="confirmMessage" class="text-gray-600 mb-8">此動作無法復原，您確定要繼續嗎？</p>
+            <div class="flex gap-4">
+                <button onclick="closeModal()" class="flex-1 py-3 bg-gray-100 text-gray-600 font-bold rounded-xl hover:bg-gray-200 transition">取消</button>
+                <button id="confirmBtn" class="flex-1 py-3 bg-red-500 text-white font-bold rounded-xl shadow-lg hover:bg-red-600 transition">確定</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 初始化
+        window.addEventListener('DOMContentLoaded', () => { 
+            addStoreRow(); 
+            onTypeChange();
+        });
+
+        window.onTypeChange = function() {
+            const vType = document.getElementById('volumeType').value;
+            const warehouseContainer = document.getElementById('warehouseContainer');
+            const deliveryContainer = document.getElementById('deliveryTypeContainer');
+            const deliverySelect = document.getElementById('deliveryType');
+            const templateContainer = document.getElementById('templateSelectionContainer');
+            const editingLabel = document.getElementById('currentEditingType');
+            const routeTabBtn = document.getElementById('tab-routes');
+            
+            if (vType === '爆收NDD') {
+                deliverySelect.innerHTML = `<option value="隔日到貨">隔日到貨</option><option value="先收NDD，剩餘載量收一般離店貨">先收NDD，剩餘載量收一般離店貨</option>`;
+            } else if (vType === '爆收') {
+                deliverySelect.innerHTML = `<option value="收一般離店貨">收一般離店貨</option>`;
+            } else {
+                deliverySelect.innerHTML = `<option value="收一般離店貨">收一般離店貨</option>`;
+            }
+
+            if (vType === '爆送') {
+                warehouseContainer.classList.remove('hidden');
+                deliveryContainer.classList.add('hidden');
+                templateContainer.classList.remove('hidden'); 
+                routeTabBtn.classList.remove('hidden');    
+            } else {
+                warehouseContainer.classList.add('hidden');
+                deliveryContainer.classList.remove('hidden');
+                templateContainer.classList.add('hidden'); 
+                routeTabBtn.classList.add('hidden');       
+                switchDbTab('accounts');                   
+            }
+            
+            editingLabel.textContent = `當前維護：${vType}`;
+            renderDatabaseTable(); renderRouteTable(); refreshTemplateSelector(); handleAutoLookup(); updatePreview();
+        }
+
+        window.switchDbTab = function(tab) {
+            const accountsTab = document.getElementById('tab-accounts');
+            const routesTab = document.getElementById('tab-routes');
+            document.getElementById('dbSection-accounts').classList.toggle('hidden', tab !== 'accounts');
+            document.getElementById('dbSection-routes').classList.toggle('hidden', tab !== 'routes');
+            if (tab === 'accounts') {
+                accountsTab.classList.add('tab-active'); accountsTab.classList.remove('text-gray-400');
+                routesTab.classList.remove('tab-active'); routesTab.classList.add('text-gray-400');
+            } else {
+                routesTab.classList.add('tab-active'); routesTab.classList.remove('text-gray-400');
+                accountsTab.classList.remove('tab-active'); accountsTab.classList.add('text-gray-400');
+            }
+        }
+
+        window.handleAutoLookup = function() {
+            const vType = document.getElementById('volumeType').value;
+            const rows = document.querySelectorAll('.store-row');
+            const openAccountField = document.getElementById('openAccount');
+            let matchedKeys = [];
+            rows.forEach(row => {
+                const name = row.querySelector('.store-name').value.trim();
+                if (name && window.accountDatabase[vType]) {
+                    const key = window.accountDatabase[vType][name];
+                    if (key && !matchedKeys.includes(key)) matchedKeys.push(key);
+                }
+            });
+            openAccountField.value = matchedKeys.length > 0 ? matchedKeys.sort().join('/') : '';
+        }
+
+        function renderDatabaseTable() {
+            const vType = document.getElementById('volumeType').value;
+            const tableBody = document.getElementById('dbTableBody');
+            const data = window.accountDatabase[vType] || {};
+            const storeNames = Object.keys(data).sort();
+            tableBody.innerHTML = storeNames.length === 0 ? '<tr><td colspan="3" class="p-6 text-center text-gray-400 font-bold italic">該模式尚無帳號資料</td></tr>' : '';
+            storeNames.forEach(name => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td class="p-3 border-b">${name}</td><td class="p-3 border-b text-blue-600 font-mono">${data[name]}</td><td class="p-3 border-b text-center"><button onclick="deleteDbEntry('${name}')" class="text-red-400 font-bold text-2xl hover:text-red-600 transition">×</button></td>`;
+                tableBody.appendChild(tr);
+            });
+        }
+
+        function renderRouteTable() {
+            const vType = document.getElementById('volumeType').value;
+            const body = document.getElementById('routeTableBody');
+            const data = window.routeTemplates[vType] || {};
+            const ids = Object.keys(data).sort();
+            body.innerHTML = ids.length === 0 ? '<tr><td colspan="3" class="p-6 text-center text-gray-400 font-bold italic">該模式尚無路線模板</td></tr>' : '';
+            ids.forEach(id => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td class="p-3 border-b font-bold text-blue-600">${id}</td><td class="p-3 border-b text-gray-500">${data[id].join(', ')}</td><td class="p-3 border-b text-center"><button onclick="deleteRouteTemplate('${id}')" class="text-red-400 font-bold text-2xl hover:text-red-600 transition">×</button></td>`;
+                body.appendChild(tr);
+            });
+        }
+
+        function refreshTemplateSelector() {
+            const vType = document.getElementById('volumeType').value;
+            const selector = document.getElementById('routeTemplateSelector');
+            selector.innerHTML = '<option value="">-- 如果知道路線，請選擇路線 --</option>';
+            const data = window.routeTemplates[vType] || {};
+            Object.keys(data).sort().forEach(id => {
+                const opt = document.createElement('option');
+                opt.value = id; opt.textContent = id;
+                selector.appendChild(opt);
+            });
+        }
+
+        window.addDbEntry = function() {
+            const vType = document.getElementById('volumeType').value;
+            const s = document.getElementById('newDbStore').value.trim(), k = document.getElementById('newDbKey').value.trim();
+            if (s && k) { window.accountDatabase[vType][s] = k; document.getElementById('newDbStore').value = ''; document.getElementById('newDbKey').value = ''; renderDatabaseTable(); handleAutoLookup(); updatePreview(); window.syncToCloud(); }
+        }
+        window.deleteDbEntry = function(name) {
+            const vType = document.getElementById('volumeType').value;
+            delete window.accountDatabase[vType][name]; renderDatabaseTable(); handleAutoLookup(); updatePreview(); window.syncToCloud();
+        }
+        window.addRouteTemplate = function() {
+            const vType = document.getElementById('volumeType').value;
+            const id = document.getElementById('newRouteId').value.trim(), storeStr = document.getElementById('newRouteStores').value.trim();
+            if (id && storeStr) { 
+                if (!window.routeTemplates[vType]) window.routeTemplates[vType] = {};
+                window.routeTemplates[vType][id] = storeStr.split(/[,，\s\n]+/).filter(s => s !== ""); 
+                renderRouteTable(); refreshTemplateSelector();
+                document.getElementById('newRouteId').value = ''; document.getElementById('newRouteStores').value = ''; window.syncToCloud();
+            }
+        }
+        window.deleteRouteTemplate = function(id) {
+            const vType = document.getElementById('volumeType').value;
+            delete window.routeTemplates[vType][id]; renderRouteTable(); refreshTemplateSelector(); window.syncToCloud();
+        }
+
+        window.showConfirm = function(title, message, callback) {
+            document.getElementById('confirmTitle').textContent = title;
+            document.getElementById('confirmMessage').textContent = message;
+            const btn = document.getElementById('confirmBtn');
+            btn.onclick = () => { callback(); closeModal(); };
+            document.getElementById('confirmModal').classList.remove('hidden');
+        }
+        window.closeModal = function() { document.getElementById('confirmModal').classList.add('hidden'); }
+
+        window.clearAllAccounts = function() {
+            const vType = document.getElementById('volumeType').value;
+            showConfirm("清空鑰匙庫？", `確認要清空「${vType}」專屬的所有帳號資料嗎？`, () => {
+                window.accountDatabase[vType] = {}; renderDatabaseTable(); handleAutoLookup(); updatePreview(); window.syncToCloud();
+            });
+        }
+        window.clearAllRouteTemplates = function() {
+            const vType = document.getElementById('volumeType').value;
+            showConfirm("清空模板庫？", `確認要清空「${vType}」專屬的所有路線模板嗎？`, () => {
+                window.routeTemplates[vType] = {}; renderRouteTable(); refreshTemplateSelector(); window.syncToCloud();
+            });
+        }
+        window.clearAllStores = function() {
+            showConfirm("清空清單？", "確認要刪除當前輸入的所有店點嗎？", () => {
+                document.getElementById('storeList').innerHTML = ''; addStoreRow(); updatePreview();
+            });
+        }
+
+        window.addStoreRow = function(name = '', note = '') {
+            const storeList = document.getElementById('storeList');
+            const id = 'row_' + Date.now() + Math.random().toString(36).substr(2, 4);
+            const div = document.createElement('div');
+            div.className = 'store-row flex items-center gap-3 p-3 border-2 rounded-xl relative group transition-all hover:border-blue-300 bg-white shadow-sm mb-2';
+            div.id = id;
+            div.innerHTML = `<div class="flex-grow grid grid-cols-2 gap-4"><input type="text" placeholder="店名" class="store-name p-2.5 text-base border-none bg-transparent outline-none font-bold text-gray-700" value="${name}"><input type="text" placeholder="備註" class="store-note p-2.5 text-base border-none bg-transparent outline-none text-gray-500 italic" value="${note}"></div><button onclick="removeRow('${id}')" class="text-gray-300 hover:text-red-500 px-3 font-bold text-3xl transition">×</button>`;
+            storeList.appendChild(div);
+            div.querySelectorAll('input').forEach(i => i.addEventListener('input', () => { handleAutoLookup(); updatePreview(); }));
+            updatePreview();
+        }
+        window.removeRow = function(id) { if (document.querySelectorAll('.store-row').length > 1) { document.getElementById(id).remove(); handleAutoLookup(); updatePreview(); } }
+        window.toggleBatchMode = function() { document.getElementById('batchContainer').classList.toggle('hidden'); }
+        window.processBatch = function() {
+            const input = document.getElementById('batchInput').value; if (!input.trim()) return;
+            const firstRow = document.querySelector('.store-row'); if (firstRow && !firstRow.querySelector('.store-name').value) firstRow.remove();
+            input.split(/\r?\n/).filter(l => l.trim() !== "").forEach(line => {
+                let name = line.trim(), note = ""; const bm = line.match(/(.*)(<.*>)$/);
+                if (bm) { name = bm[1].trim(); note = bm[2].trim(); }
+                else if (line.includes(" - ")) {
+                    const parts = line.split(" - ");
+                    const lastPart = parts[parts.length - 1].trim();
+                    if (lastPart.includes("智取店")) { name = line.trim(); note = ""; }
+                    else { const idx = line.lastIndexOf(" - "); name = line.substring(0, idx).trim(); note = lastPart; }
+                }
+                addStoreRow(name, note);
+            });
+            document.getElementById('batchInput').value = ""; toggleBatchMode(); handleAutoLookup(); updatePreview();
+        }
+
+        window.toggleDbImportMode = function() { document.getElementById('dbImportContainer').classList.toggle('hidden'); }
+        window.processDbBatch = function() {
+            const input = document.getElementById('dbBatchInput').value; const vType = document.getElementById('volumeType').value;
+            if (!input.trim()) return;
+            input.split(/\r?\n/).forEach(line => {
+                let p = line.split('\t'); if (p.length < 2) p = line.split(',');
+                if (p.length >= 2) { const k = p[0].trim(); const s = p[1].trim(); if (k && s && k !== "帳號" && k !== "店名") window.accountDatabase[vType][s] = k; }
+            });
+            document.getElementById('dbBatchInput').value = ""; toggleDbImportMode(); renderDatabaseTable(); handleAutoLookup(); updatePreview(); window.syncToCloud();
+        }
+        window.toggleRouteDbImportMode = function() { document.getElementById('routeDbImportContainer').classList.toggle('hidden'); }
+        window.processRouteDbBatch = function() {
+            const input = document.getElementById('routeDbBatchInput').value; const vType = document.getElementById('volumeType').value;
+            if (!input.trim()) return;
+            input.split(/\r?\n/).filter(l => l.trim() !== "").forEach(line => {
+                let parts = line.split('\t'); if (parts.length < 2) parts = line.split(',');
+                if (parts.length >= 2) {
+                    let p0 = parts[0].trim(), p1 = parts[1].trim(); if (!p0 || !p1 || p0 === "店名" || p0 === "帳號") return;
+                    let rid, sname; if (p0.length > p1.length || p0.includes('店')) { rid = p1; sname = p0; } else { rid = p0; sname = p1; }
+                    if (!window.routeTemplates[vType]) window.routeTemplates[vType] = {};
+                    if (!window.routeTemplates[vType][rid]) window.routeTemplates[vType][rid] = [];
+                    sname.split(/[,，]+/).filter(s => s.trim() !== "").forEach(s => {
+                        if (!window.routeTemplates[vType][rid].includes(s.trim())) window.routeTemplates[vType][rid].push(s.trim());
+                    });
+                }
+            });
+            document.getElementById('routeDbBatchInput').value = ""; toggleRouteDbImportMode(); renderRouteTable(); refreshTemplateSelector(); window.syncToCloud();
+        }
+
+        window.toggleDbSection = function() {
+            const area = document.getElementById('dbContentArea'), icon = document.getElementById('dbToggleIcon'), text = document.getElementById('dbToggleText');
+            area.classList.toggle('hidden'); icon.style.transform = area.classList.contains('hidden') ? 'rotate(0deg)' : 'rotate(180deg)';
+            text.textContent = area.classList.contains('hidden') ? '展開維護' : '收合管理';
+        }
+        
+        window.applyRouteTemplate = function() {
+            const vType = document.getElementById('volumeType').value;
+            const tid = document.getElementById('routeTemplateSelector').value;
+            const stores = window.routeTemplates[vType] ? window.routeTemplates[vType][tid] : null;
+            if (stores) { document.getElementById('storeList').innerHTML = ''; stores.forEach(n => addStoreRow(n)); handleAutoLookup(); updatePreview(); }
+        }
+
+        function generateText() {
+            const vType = document.getElementById('volumeType').value;
+            const route = document.getElementById('route').value || '[路線]';
+            const vehicle = document.getElementById('vehicleType').value;
+            const acc = document.getElementById('openAccount').value || '[帳號]';
+            const dIdInput = document.getElementById('driverId').value.trim();
+            let dIdDisplay = dIdInput || "請提供司機編號";
+            const rows = document.querySelectorAll('.store-row');
+            let storeListText = "";
+            rows.forEach(row => {
+                const sName = row.querySelector('.store-name').value;
+                const sNote = row.querySelector('.store-note').value;
+                if (sName) { let ns = sNote ? ((sNote.startsWith('<') && sNote.endsWith('>')) ? sNote : ` - ${sNote}`) : ''; storeListText += `${sName}${ns}\n`; }
+            });
+            if (!storeListText) storeListText = "[請輸入店點]\n";
+            if (vType === '爆送') {
+                const wh = document.getElementById('warehouseType').value;
+                return `${route}\n${storeListText}車輛頓型: ${vehicle}\n開門帳號: ${acc}\n疊貨倉別: ${wh}\n司機編號: ${dIdDisplay}`;
+            }
+            const dt = document.getElementById('deliveryType').value;
+            return `${route}\n${storeListText}車輛頓型: ${vehicle}\n收貨類型: ${dt}\n開門帳號: ${acc}\n司機編號: ${dIdDisplay}`;
+        }
+
+        window.updatePreview = function() { document.getElementById('previewArea').textContent = generateText(); };
+        window.copyToClipboard = function() {
+            const t = generateText(), el = document.createElement('textarea'); el.value = t; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el);
+            const m = document.getElementById('copyMsg'); m.style.opacity = '1'; setTimeout(() => m.style.opacity = '0', 2000);
+        };
+    </script>
+</body>
+</html>
