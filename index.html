@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>司機爆量資訊產生 - 雲端同步版</title>
+    <title>司機爆量資訊產生工具 - 雲端同步版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Firebase SDKs -->
     <script type="module">
@@ -11,26 +11,22 @@
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // 全域變數定義
+        // 全域資料庫變數
         window.accountDatabase = { "爆收": {}, "爆送": {}, "爆收NDD": {} };
         window.routeTemplates = { "爆收": {}, "爆送": {}, "爆收NDD": {} };
 
-        /**
-         * --- 自定義雲端配置說明 ---
-         * 如果您要在 GitHub 使用雲端同步，請到 Firebase 控制台申請專案，
-         * 並將您的配置填入下方的 userFirebaseConfig 變數中。
-         */
+        // 您的專屬 Firebase 配置
         const userFirebaseConfig = {
-  apiKey: "AIzaSyCVcHVz7MkOyx5j3eUfM0XN7rHDBJHYgg8",
-  authDomain: "louistools-bca8e.firebaseapp.com",
-  projectId: "louistools-bca8e",
-  storageBucket: "louistools-bca8e.firebasestorage.app",
-  messagingSenderId: "1099365589562",
-  appId: "1:1099365589562:web:555920151041d6bf494b03",
-  measurementId: "G-2QJKQ983TB"
-}; // 例如: { apiKey: "...", authDomain: "...", ... }
+            apiKey: "AIzaSyCVcHVz7MkOyx5j3eUfM0XN7rHDBJHYgg8",
+            authDomain: "louistools-bca8e.firebaseapp.com",
+            projectId: "louistools-bca8e",
+            storageBucket: "louistools-bca8e.firebasestorage.app",
+            messagingSenderId: "1099365589562",
+            appId: "1:1099365589562:web:555920151041d6bf494b03",
+            measurementId: "G-2QJKQ983TB"
+        };
 
-        // 優先順序：1. Canvas 環境配置 2. 使用者自定義配置
+        // 優先順序：1. 系統自動注入環境配置 2. 使用者填寫的 userFirebaseConfig
         const envConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
         const finalConfig = envConfig || userFirebaseConfig;
 
@@ -52,31 +48,36 @@
                 initAuth();
 
                 onAuthStateChanged(auth, (user) => {
+                    const statusEl = document.getElementById('cloudStatus');
                     if (user) {
-                        const statusEl = document.getElementById('cloudStatus');
                         statusEl.textContent = "雲端同步中";
                         statusEl.className = "bg-green-100 text-green-600 text-[10px] font-bold px-3 py-1 rounded-full shadow-sm";
                         
+                        // 監聽並自動同步 鑰匙庫
                         const accountRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'accountDb');
                         onSnapshot(accountRef, (snap) => {
                             if (snap.exists()) {
                                 window.accountDatabase = snap.data();
                                 renderDatabaseTable();
                                 handleAutoLookup();
+                                updatePreview();
                             }
                         }, (err) => console.error("帳號讀取失敗", err));
 
+                        // 監聽並自動同步 路線模板
                         const routeRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'routeTemplates');
                         onSnapshot(routeRef, (snap) => {
                             if (snap.exists()) {
                                 window.routeTemplates = snap.data();
                                 renderRouteTable();
                                 refreshTemplateSelector();
+                                updatePreview();
                             }
                         }, (err) => console.error("路線讀取失敗", err));
                     }
                 });
 
+                // 提供給 UI 操作呼叫的儲存函式
                 window.syncToCloud = async () => {
                     const user = auth.currentUser;
                     if (!user) return;
@@ -94,13 +95,13 @@
                 console.error("Firebase 初始化失敗", e);
             }
         } else {
-            // 完全離線/本地模式
+            // 本地或完全無配置模式
             document.addEventListener('DOMContentLoaded', () => {
                 const statusEl = document.getElementById('cloudStatus');
-                statusEl.textContent = "GitHub/本地模式 (無雲端同步)";
+                statusEl.textContent = "本地模式 (無雲端同步)";
                 statusEl.className = "bg-orange-100 text-orange-600 text-[10px] font-bold px-3 py-1 rounded-full shadow-sm";
             });
-            window.syncToCloud = () => { console.log("當前環境不支援雲端儲存"); };
+            window.syncToCloud = () => { console.log("當前環境不支援儲存"); };
         }
     </script>
     <style>
@@ -111,15 +112,23 @@
         .store-row:nth-child(even) { background-color: #f9fafb; }
         .transition-all { transition: all 0.3s ease-in-out; }
         .tab-active { border-bottom: 3px solid #10b981 !important; color: #10b981 !important; font-weight: bold !important; }
-        .label-container { display: flex; flex-direction: column; justify-content: flex-end; height: 42px; margin-bottom: 6px; }
+        
+        /* 統一標籤容器高度，解決輸入框對不齊問題 */
+        .label-container { 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: flex-end; 
+            height: 42px; 
+            margin-bottom: 6px; 
+        }
     </style>
 </head>
 <body class="p-3 md:p-8">
     <div class="max-w-[1400px] mx-auto"> 
         
-        <!-- 置頂同步狀態列 -->
+        <!-- 同步狀態提示 -->
         <div class="flex justify-end mb-2">
-            <span id="cloudStatus" class="bg-gray-100 text-gray-500 text-[10px] font-bold px-3 py-1 rounded-full shadow-sm">載入中...</span>
+            <span id="cloudStatus" class="bg-gray-100 text-gray-500 text-[10px] font-bold px-3 py-1 rounded-full shadow-sm transition-all">載入中...</span>
         </div>
 
         <!-- 1. 頂部：基本配置 (STEP 1) -->
@@ -130,17 +139,19 @@
             </div>
             
             <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-12 gap-4">
+                <!-- 當前爆量類型 -->
                 <div class="lg:col-span-2">
                     <div class="label-container">
                         <label class="text-sm font-semibold text-blue-600 font-bold">當前爆量類型</label>
                     </div>
-                    <select id="volumeType" onchange="onTypeChange()" class="w-full p-3 text-base border-2 border-blue-100 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-400 font-bold text-blue-800">
+                    <select id="volumeType" onchange="onTypeChange()" class="w-full p-3 text-base border-2 border-blue-100 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-400 font-bold text-blue-800 transition-all">
                         <option value="爆收">爆收</option>
                         <option value="爆送">爆送</option>
                         <option value="爆收NDD">爆收NDD</option>
                     </select>
                 </div>
 
+                <!-- 出貨路線 -->
                 <div class="lg:col-span-2">
                     <div class="label-container">
                         <span class="text-xs text-blue-500 font-bold leading-tight">(如Y2-1、Y2-1NDD)</span>
@@ -149,6 +160,7 @@
                     <input type="text" id="route" oninput="updatePreview()" placeholder="請輸入路線" class="w-full p-3 text-base border-2 rounded-lg outline-none focus:ring-2 focus:ring-blue-400 border-gray-100 bg-blue-50/30">
                 </div>
 
+                <!-- 車輛頓型 -->
                 <div class="lg:col-span-2">
                     <div class="label-container">
                         <label class="text-sm font-semibold text-gray-500 text-nowrap">車輛頓型</label>
@@ -160,6 +172,7 @@
                     </select>
                 </div>
 
+                <!-- 司機編號 -->
                 <div class="lg:col-span-2">
                     <div class="label-container">
                         <label class="text-sm font-semibold text-gray-500">司機編號</label>
@@ -167,6 +180,7 @@
                     <input type="text" id="driverId" oninput="updatePreview()" placeholder="請輸入編號" class="w-full p-3 text-base border-2 rounded-lg outline-none focus:ring-2 focus:ring-blue-400 border-gray-100">
                 </div>
 
+                <!-- 開門帳號 -->
                 <div class="lg:col-span-1">
                     <div class="label-container">
                         <label class="text-sm font-semibold text-gray-400 text-nowrap">開門帳號</label>
@@ -174,6 +188,7 @@
                     <input type="text" id="openAccount" readonly placeholder="AUTO" class="w-full p-3 text-base border-2 border-gray-50 bg-gray-50 rounded-lg outline-none cursor-not-allowed text-gray-400 text-center">
                 </div>
                 
+                <!-- 變動欄位 (疊貨倉別/收貨類型) -->
                 <div id="warehouseContainer" class="lg:col-span-3 hidden">
                     <div class="label-container">
                         <label class="text-sm font-semibold text-orange-600 font-bold">疊貨倉別</label>
@@ -193,9 +208,10 @@
             </div>
         </div>
 
+        <!-- 主要操作區 -->
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
             
-            <!-- 2. 左側：店點清單 (STEP 2) -->
+            <!-- 左側：店點與匯入 -->
             <div class="lg:col-span-7 space-y-6">
                 
                 <div class="main-card p-6">
@@ -206,6 +222,7 @@
                         </div>
                     </div>
 
+                    <!-- 快速選擇模板 (僅爆送顯示) -->
                     <div id="templateSelectionContainer" class="hidden mb-6 p-4 bg-blue-50 rounded-xl border-2 border-blue-100 shadow-inner">
                         <label class="block text-sm font-bold text-blue-700 mb-2.5">快速選擇作業路線模板:</label>
                         <div class="flex gap-3">
@@ -216,6 +233,7 @@
                         </div>
                     </div>
 
+                    <!-- 操作按鈕 -->
                     <div class="flex flex-wrap gap-3 mb-6">
                         <button onclick="addStoreRow()" class="flex-1 min-w-[120px] py-3 bg-white text-blue-600 text-base font-bold rounded-xl hover:bg-blue-50 border-2 border-blue-200 transition shadow-sm flex items-center justify-center gap-2">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
@@ -231,6 +249,7 @@
                         </button>
                     </div>
 
+                    <!-- 批次貼上區塊 -->
                     <div id="batchContainer" class="hidden mb-6 p-4 bg-orange-50 rounded-xl border-2 border-orange-200 shadow-inner">
                         <textarea id="batchInput" rows="5" class="w-full p-3 text-base border-none rounded-lg outline-none" placeholder="在此貼上多個店名..."></textarea>
                         <div class="flex justify-end mt-3">
@@ -238,8 +257,8 @@
                         </div>
                     </div>
 
+                    <!-- 店點列表 -->
                     <div id="storeList" class="space-y-3 max-h-[450px] overflow-y-auto pr-2 border rounded-xl p-2 bg-gray-50/50 shadow-inner">
-                        <!-- 店點列 -->
                     </div>
                 </div>
 
@@ -265,6 +284,7 @@
                             <button onclick="switchDbTab('routes')" id="tab-routes" class="pb-3 px-4 transition-all text-gray-400 hidden">作業路線庫</button>
                         </div>
 
+                        <!-- 鑰匙管理 -->
                         <div id="dbSection-accounts">
                             <div class="flex justify-end mb-4 gap-2">
                                 <button onclick="toggleDbImportMode()" class="text-sm bg-gray-50 hover:bg-gray-200 px-4 py-2 rounded-lg border border-gray-300 font-bold">匯入 TSV</button>
@@ -277,8 +297,8 @@
                                 </div>
                             </div>
                             <div class="grid grid-cols-12 gap-3 mb-4 bg-gray-50 p-3 rounded-xl border-2 border-dashed border-green-200">
-                                <div class="col-span-5"><input type="text" id="newDbStore" placeholder="店名" class="w-full p-2.5 text-sm border-2 rounded-lg outline-none"></div>
-                                <div class="col-span-5"><input type="text" id="newDbKey" placeholder="帳號" class="w-full p-2.5 text-sm border-2 rounded-lg outline-none"></div>
+                                <div class="col-span-5"><input type="text" id="newDbStore" placeholder="店名" class="w-full p-2.5 text-sm border-2 rounded-lg"></div>
+                                <div class="col-span-5"><input type="text" id="newDbKey" placeholder="帳號" class="w-full p-2.5 text-sm border-2 rounded-lg"></div>
                                 <div class="col-span-2"><button onclick="addDbEntry()" class="w-full py-2.5 bg-green-600 text-white text-sm font-bold rounded-lg shadow-sm">新增</button></div>
                             </div>
                             <div class="max-h-[300px] overflow-y-auto border-2 rounded-xl border-gray-50">
@@ -286,6 +306,7 @@
                             </div>
                         </div>
 
+                        <!-- 路線模板管理 -->
                         <div id="dbSection-routes" class="hidden">
                             <div class="flex justify-end mb-4 gap-2">
                                 <button onclick="toggleRouteDbImportMode()" class="text-sm bg-gray-50 hover:bg-gray-200 px-4 py-2 rounded-lg border border-gray-300 font-bold transition-all">匯入路線</button>
@@ -298,8 +319,8 @@
                                 </div>
                             </div>
                             <div class="grid grid-cols-12 gap-3 mb-4 bg-gray-50 p-3 rounded-xl border-2 border-dashed border-green-200">
-                                <div class="col-span-3"><input type="text" id="newRouteId" placeholder="模板(如1N7)" class="w-full p-2.5 text-sm border-2 rounded-lg outline-none"></div>
-                                <div class="col-span-7"><input type="text" id="newRouteStores" placeholder="包含店名(逗號隔開)" class="w-full p-2.5 text-sm border-2 rounded-lg outline-none"></div>
+                                <div class="col-span-3"><input type="text" id="newRouteId" placeholder="模板(如1N7)" class="w-full p-2.5 text-sm border-2 rounded-lg"></div>
+                                <div class="col-span-7"><input type="text" id="newRouteStores" placeholder="包含店名(逗號隔開)" class="w-full p-2.5 text-sm border-2 rounded-lg"></div>
                                 <div class="col-span-2"><button onclick="addRouteTemplate()" class="w-full py-2.5 bg-green-600 text-white text-sm font-bold rounded-lg shadow-sm">新增</button></div>
                             </div>
                             <div class="max-h-[300px] overflow-y-auto border-2 rounded-xl border-gray-50">
@@ -318,7 +339,7 @@
                             <span class="bg-purple-100 text-purple-700 text-sm font-bold px-3 py-1 rounded-full mr-3">FINAL</span>
                             <h2 class="text-xl font-bold text-gray-800">即時預覽</h2>
                         </div>
-                        <button onclick="copyToClipboard()" class="text-base bg-blue-600 text-white px-5 py-2.5 rounded-full font-bold hover:bg-blue-700 transition shadow-lg flex items-center gap-2">
+                        <button onclick="copyToClipboard()" class="text-base bg-blue-600 text-white px-5 py-2.5 rounded-full font-bold hover:bg-blue-700 transition shadow-lg">
                             一鍵複製內容
                         </button>
                     </div>
@@ -342,8 +363,8 @@
     </div>
 
     <script>
-        // 初始化
-        window.addEventListener('DOMContentLoaded', () => { 
+        // --- 初始化操作 ---
+        document.addEventListener('DOMContentLoaded', () => { 
             addStoreRow(); 
             onTypeChange();
         });
@@ -359,8 +380,6 @@
             
             if (vType === '爆收NDD') {
                 deliverySelect.innerHTML = `<option value="隔日到貨">隔日到貨</option><option value="先收NDD，剩餘載量收一般離店貨">先收NDD，剩餘載量收一般離店貨</option>`;
-            } else if (vType === '爆收') {
-                deliverySelect.innerHTML = `<option value="收一般離店貨">收一般離店貨</option>`;
             } else {
                 deliverySelect.innerHTML = `<option value="收一般離店貨">收一般離店貨</option>`;
             }
@@ -416,10 +435,10 @@
             const tableBody = document.getElementById('dbTableBody');
             const data = window.accountDatabase[vType] || {};
             const storeNames = Object.keys(data).sort();
-            tableBody.innerHTML = storeNames.length === 0 ? '<tr><td colspan="3" class="p-6 text-center text-gray-400 font-bold italic">該模式尚無帳號資料</td></tr>' : '';
+            tableBody.innerHTML = storeNames.length === 0 ? '<tr><td colspan="3" class="p-6 text-center text-gray-400 font-bold italic">尚無帳號資料</td></tr>' : '';
             storeNames.forEach(name => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td class="p-3 border-b">${name}</td><td class="p-3 border-b text-blue-600 font-mono">${data[name]}</td><td class="p-3 border-b text-center"><button onclick="deleteDbEntry('${name}')" class="text-red-400 font-bold text-2xl hover:text-red-600 transition">×</button></td>`;
+                tr.innerHTML = `<td class="p-3 border-b">${name}</td><td class="p-3 border-b text-blue-600 font-mono">${data[name]}</td><td class="p-3 border-b text-center"><button onclick="deleteDbEntry('${name}')" class="text-red-400 font-bold text-2xl hover:text-red-600">×</button></td>`;
                 tableBody.appendChild(tr);
             });
         }
@@ -429,10 +448,10 @@
             const body = document.getElementById('routeTableBody');
             const data = window.routeTemplates[vType] || {};
             const ids = Object.keys(data).sort();
-            body.innerHTML = ids.length === 0 ? '<tr><td colspan="3" class="p-6 text-center text-gray-400 font-bold italic">該模式尚無路線模板</td></tr>' : '';
+            body.innerHTML = ids.length === 0 ? '<tr><td colspan="3" class="p-6 text-center text-gray-400 font-bold italic">尚無模板</td></tr>' : '';
             ids.forEach(id => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td class="p-3 border-b font-bold text-blue-600">${id}</td><td class="p-3 border-b text-gray-500">${data[id].join(', ')}</td><td class="p-3 border-b text-center"><button onclick="deleteRouteTemplate('${id}')" class="text-red-400 font-bold text-2xl hover:text-red-600 transition">×</button></td>`;
+                tr.innerHTML = `<td class="p-3 border-b font-bold text-blue-600">${id}</td><td class="p-3 border-b text-gray-500">${data[id].join(', ')}</td><td class="p-3 border-b text-center"><button onclick="deleteRouteTemplate('${id}')" class="text-red-400 font-bold text-2xl hover:text-red-600">×</button></td>`;
                 body.appendChild(tr);
             });
         }
@@ -578,29 +597,39 @@
             const vehicle = document.getElementById('vehicleType').value;
             const acc = document.getElementById('openAccount').value || '[帳號]';
             const dIdInput = document.getElementById('driverId').value.trim();
+            
             let dIdDisplay = dIdInput || "請提供司機編號";
+            
             const rows = document.querySelectorAll('.store-row');
             let storeListText = "";
             rows.forEach(row => {
                 const sName = row.querySelector('.store-name').value;
                 const sNote = row.querySelector('.store-note').value;
-                if (sName) { let ns = sNote ? ((sNote.startsWith('<') && sNote.endsWith('>')) ? sNote : ` - ${sNote}`) : ''; storeListText += `${sName}${ns}\n`; }
+                if (sName) { 
+                    let ns = sNote ? ((sNote.startsWith('<') && sNote.endsWith('>')) ? sNote : ` - ${sNote}`) : ''; 
+                    storeListText += `${sName}${ns}\n`; 
+                }
             });
             if (!storeListText) storeListText = "[請輸入店點]\n";
+
             if (vType === '爆送') {
                 const wh = document.getElementById('warehouseType').value;
                 return `${route}\n${storeListText}車輛頓型: ${vehicle}\n開門帳號: ${acc}\n疊貨倉別: ${wh}\n司機編號: ${dIdDisplay}`;
+            } else {
+                const dt = document.getElementById('deliveryType').value;
+                return `${route}\n${storeListText}車輛頓型: ${vehicle}\n收貨類型: ${dt}\n開門帳號: ${acc}\n司機編號: ${dIdDisplay}`;
             }
-            const dt = document.getElementById('deliveryType').value;
-            return `${route}\n${storeListText}車輛頓型: ${vehicle}\n收貨類型: ${dt}\n開門帳號: ${acc}\n司機編號: ${dIdDisplay}`;
         }
 
-        window.updatePreview = function() { document.getElementById('previewArea').textContent = generateText(); };
+        window.updatePreview = function() { 
+            const previewEl = document.getElementById('previewArea');
+            if (previewEl) previewEl.textContent = generateText(); 
+        };
+
         window.copyToClipboard = function() {
             const t = generateText(), el = document.createElement('textarea'); el.value = t; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el);
             const m = document.getElementById('copyMsg'); m.style.opacity = '1'; setTimeout(() => m.style.opacity = '0', 2000);
         };
     </script>
 </body>
-
 </html>
